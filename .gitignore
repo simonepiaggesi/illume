@@ -1,3 +1,4 @@
-illume/.ipynb_checkpoints
-illume/__pycache__
-
+illume/.ipynb_checkpoints/
+illume/__pycache__/
+illume/blackboxes/
+illume/models/

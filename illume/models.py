@@ -24,7 +24,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 flatten = lambda m: [item for row in m for item in row]
         
 class LinearEncDec(nn.Module):
-    def __init__(self, input_dim, latent_dim, n_layers=3):
+    def __init__(self, input_dim, latent_dim):
         super(LinearEncDec, self).__init__()
 
         self.input_dim = input_dim
@@ -33,7 +33,7 @@ class LinearEncDec(nn.Module):
         self.weight = nn.Parameter(nn.init.uniform_(torch.Tensor(latent_dim, input_dim), 
                                                     a=-1./np.sqrt(input_dim),b=1./np.sqrt(input_dim)))
 
-        dec_hidden_dims = np.logspace(np.log2(latent_dim), np.log2(input_dim), num=n_layers+1, base=2).astype(int)[1:-1]
+        dec_hidden_dims = np.logspace(np.log2(latent_dim), np.log2(input_dim), num=4, base=2).astype(int)[1:-1]
         self.decoder = MLP(latent_dim, list(dec_hidden_dims)+[input_dim], bias=True)
 
     def encode(self, x, num_k=None):
@@ -60,16 +60,16 @@ class LinearEncDec(nn.Module):
 
 
 class LocalLinearAutoEnc(nn.Module):
-    def __init__(self, input_dim, latent_dim, n_layers=3):
+    def __init__(self, input_dim, latent_dim):
         super(LocalLinearAutoEnc, self).__init__()
 
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        enc_hidden_dims = np.logspace(np.log2(input_dim), np.log2(input_dim*latent_dim), num=n_layers+1, base=2).astype(int)[1:-1]
+        enc_hidden_dims = np.logspace(np.log2(input_dim), np.log2(input_dim*latent_dim), num=4, base=2).astype(int)[1:-1]
         self.encoder = MLP(input_dim, list(enc_hidden_dims)+[input_dim*latent_dim], bias=True)
 
-        dec_hidden_dims = np.logspace(np.log2(latent_dim), np.log2(input_dim*latent_dim), num=n_layers+1, base=2).astype(int)[1:-1]
+        dec_hidden_dims = np.logspace(np.log2(latent_dim), np.log2(input_dim*latent_dim), num=4, base=2).astype(int)[1:-1]
         self.decoder = MLP(latent_dim, list(dec_hidden_dims)+[input_dim*latent_dim], bias=True)
         
     def encode(self, x, num_k=None):
@@ -207,13 +207,12 @@ def batch_norm(X, axis=0):
 
 
 class ILLUME(torch.nn.Module):
-    def __init__(self, encdec='linear', latent_dim=2, mlp_layers=3, max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
+    def __init__(self, encdec='linear', latent_dim=2, max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
         super().__init__()
 
         self.encdec = encdec  #'linear' , 'local_linear'
 
         self.latent_dim=latent_dim
-        self.mlp_layers=mlp_layers
 
         self.max_epochs=max_epochs
         self.early_stopping=early_stopping
@@ -244,9 +243,9 @@ class ILLUME(torch.nn.Module):
 
         if 'model' not in self.__dict__['_modules']:
             if self.encdec == 'local_linear':
-                self.model = LocalLinearAutoEnc(self.input_dim, self.latent_dim, self.mlp_layers).to(device)
+                self.model = LocalLinearAutoEnc(self.input_dim, self.latent_dim).to(device)
             elif self.encdec == 'linear':
-                self.model = LinearEncDec(self.input_dim, self.latent_dim, self.mlp_layers).to(device)
+                self.model = LinearEncDec(self.input_dim, self.latent_dim).to(device)
 
         num_trainable_params = sum([p.numel() for p in self.model.parameters()])
         #print('num. parameters = ' + str(num_trainable_params))
@@ -289,12 +288,14 @@ class ILLUME(torch.nn.Module):
                                                     lambdas=(params_dict['l_rec'], params_dict['l_kld'], 
                                                              params_dict['l_so'], params_dict['l_co'], params_dict['l_st']), 
                                                     early_stop_from_epoch=n_epochs_decaying)
+            print()
         else:
             print(f'Training Meta-encoder with max {self.max_epochs} iterations.')
             train_losses, test_losses = self._train(num_k_list=[None,]*self.max_epochs, 
                                                     lambdas=(params_dict['l_rec'], params_dict['l_kld'], 
                                                              params_dict['l_so'], params_dict['l_co'], params_dict['l_st']), 
                                                     early_stop_from_epoch=1)
+            print()
 
         self.params_dict = params_dict
 
@@ -304,13 +305,20 @@ class ILLUME(torch.nn.Module):
         if (self.W_train.shape[0]==1) and (self.X_train.shape[0]>1):
             self.W_train = np.repeat(self.W_train, self.X_train.shape[0], axis=0)
 
+        return train_losses, test_losses
 
-        print(f'Training logistic regression surrogate.')
-        self.logreg, f1 = logistic_eval(self.Z_train, np.round(self.y_train[:,1]), self.Z_val, np.round(self.y_val[:,1]), f1_average='macro')
+
+    def explain(self, class_label=1):
+
+        self.y_train_bb = (np.argmax(self.y_train, axis=1)==class_label).astype(int)
+        self.y_val_bb = (np.argmax(self.y_val, axis=1)==class_label).astype(int)
+
+        print(f'Training Logistic Regression surrogate.')
+        self.logreg, f1 = logistic_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
         print('LR surrogate score:', '%0.4f'%f1)
 
         self.lrd = {'X':self.Z_train,
-                   'Y':np.round(self.y_train[:,1]),
+                   'Y':self.y_train_bb,
                    'lr': self.logreg,
                    'feature_names': ['z'+str(i) for i in range(self.Z_train.shape[1])],
                    'original_feature_names': ['x'+str(j) for j in range(self.X_train.shape[1])],
@@ -319,19 +327,19 @@ class ILLUME(torch.nn.Module):
                    'class_values': [0,1],
                    'numeric_columns':['z'+str(i) for i in range(self.Z_train.shape[1])],
                    'X_val':self.Z_val,
-                   'Y_val':np.round(self.y_val[:,1]),
+                   'Y_val':self.y_val_bb,
                 }
 
         print(f'Generating feature importance for training set.')
         self.Ex_train = self._get_feature_importance_training()
         print()
 
-        print(f'Training decision tree surrogate.')
-        self.dtree, f1 = tree_eval(self.Z_train, np.round(self.y_train[:,1]), self.Z_val, np.round(self.y_val[:,1]), f1_average='macro')
+        print(f'Training Decision Tree surrogate.')
+        self.dtree, f1 = tree_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
         print('DT surrogate score:', '%0.4f'%f1)
 
         self.dtd = {'X':self.Z_train,
-               'Y':np.round(self.y_train[:,1]),
+               'Y':self.y_train_bb,
                'dt': self.dtree,
                'feature_names': ['z'+str(i) for i in range(self.Z_train.shape[1])],
                'original_feature_names': ['x'+str(j) for j in range(self.X_train.shape[1])],
@@ -339,8 +347,8 @@ class ILLUME(torch.nn.Module):
                'class_name': 'class',
                'class_values': [0,1],
                'numeric_columns':['z'+str(i) for i in range(self.Z_train.shape[1])],
-               'X_val': self.Z_val,
-               'Y_val': np.round(self.y_val[:,1]),
+               'X_val':self.Z_val,
+               'Y_val':self.y_val_bb,
                 }
 
         print(f'Generating factual and counterfactual rules for training set.')
@@ -348,7 +356,7 @@ class ILLUME(torch.nn.Module):
         self.cfEx_dict_train = self._get_decision_crules_training()
         print()
 
-        return train_losses, test_losses
+        return
 
     def _get_feature_importance_training(self):
 
@@ -372,7 +380,7 @@ class ILLUME(torch.nn.Module):
 
         idx_train = np.arange(self.Z_train.shape[0])
         cond_train = self.dtree.predict(self.Z_train)==y_train_bb
-        
+            
         conds_train_cf = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))!=y_train_bb, cond_train) for z in self.Z_train], dtype=bool)
         idx_from_train_cf = [cdist(z.reshape(1,-1), self.Z_train, metric='cosine')[0][conds_train_cf[i]].argsort()[0] if np.any(conds_train_cf[i]) 
                              else None for i,z in enumerate(self.Z_train)]
@@ -510,17 +518,17 @@ class ILLUME(torch.nn.Module):
         return X.cpu().detach().numpy() 
 
 
-    def get_feature_importance(self, x_test, y_test_bb):
+    def get_feature_importance(self, x_test, y_test_bb, class_label=1):
+
+        y_test_bb = (y_test_bb==class_label).astype(int)
 
         w_test, z_test = self.transform(x_test, num_k_sparse=self.params_dict['num_k'])
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
-        y_train_bb = np.round(self.y_train[:,1])
-
         idx_train = np.arange(self.Z_train.shape[0])
-        cond_train = self.logreg.predict(self.Z_train)==y_train_bb
-        conds_train = np.array([np.logical_and(self.logreg.predict(z.reshape(1,-1))==y_train_bb, cond_train) for z in z_test], dtype=bool)
+        cond_train = self.logreg.predict(self.Z_train)==self.y_train_bb
+        conds_train = np.array([np.logical_and(self.logreg.predict(z.reshape(1,-1))==self.y_train_bb, cond_train) for z in z_test], dtype=bool)
 
         idx_from_train = [cdist(z.reshape(1,-1), self.Z_train, metric='cosine')[0][conds_train[i]].argsort()[0] if np.any(conds_train[i]) else None for i,z in enumerate(z_test)]
         idx_from_train = [idx_train[conds_train[i]][t] if np.any(conds_train[i]) else None for i,t in enumerate(idx_from_train)]
@@ -532,17 +540,17 @@ class ILLUME(torch.nn.Module):
 
         return ex_test
 
-    def get_decision_rules(self, x_test, y_test_bb):
+    def get_decision_rules(self, x_test, y_test_bb, class_label=1):
+
+        y_test_bb = (y_test_bb==class_label).astype(int)
 
         w_test, z_test = self.transform(x_test, num_k_sparse=self.params_dict['num_k'])
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
-        y_train_bb = np.round(self.y_train[:,1])
-
         idx_train = np.arange(self.Z_train.shape[0])
-        cond_train = self.dtree.predict(self.Z_train)==y_train_bb
-        conds_train = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))==y_train_bb, cond_train) for z in z_test], dtype=bool)
+        cond_train = self.dtree.predict(self.Z_train)==self.y_train_bb
+        conds_train = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))==self.y_train_bb, cond_train) for z in z_test], dtype=bool)
 
         idx_from_train = [cdist(z.reshape(1,-1), self.Z_train, metric='cosine')[0][conds_train[i]].argsort()[0] if np.any(conds_train[i]) else None for i,z in enumerate(z_test)]
         idx_from_train = [idx_train[conds_train[i]][t] if np.any(conds_train[i]) else None for i,t in enumerate(idx_from_train)]
@@ -558,23 +566,23 @@ class ILLUME(torch.nn.Module):
         return ex_dict_test
 
 
-    def get_decision_crules(self, x_test, y_test_bb):
+    def get_decision_crules(self, x_test, y_test_bb, class_label=1):
+
+        y_test_bb = (y_test_bb==class_label).astype(int)
 
         w_test, z_test = self.transform(x_test, num_k_sparse=self.params_dict['num_k'])
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
-        y_train_bb = np.round(self.y_train[:,1])
-
         idx_train = np.arange(self.Z_train.shape[0])
-        cond_train = self.dtree.predict(self.Z_train)==y_train_bb
-        
-        conds_train = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))==y_train_bb, cond_train) for z in z_test], dtype=bool)
+        cond_train = self.dtree.predict(self.Z_train)==self.y_train_bb
+        conds_train = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))==self.y_train_bb, cond_train) for z in z_test], dtype=bool)
+
         idx_from_train = [cdist(z.reshape(1,-1), self.Z_train, metric='cosine')[0][conds_train[i]].argsort()[0] if np.any(conds_train[i]) 
                           else None for i,z in enumerate(z_test)]
         idx_from_train = [idx_train[conds_train[i]][t] if np.any(conds_train[i]) else None for i,t in enumerate(idx_from_train)]
 
-        conds_train_cf = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))!=y_train_bb, cond_train) for z in z_test], dtype=bool)
+        conds_train_cf = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))!=self.y_train_bb, cond_train) for z in z_test], dtype=bool)
         idx_from_train_cf = [cdist(z.reshape(1,-1), self.Z_train, metric='cosine')[0][conds_train_cf[i]].argsort()[0] if np.any(conds_train_cf[i]) 
                              else None for i,z in enumerate(z_test)]
         idx_from_train_cf = [idx_train[conds_train_cf[i]][t] if np.any(conds_train_cf[i]) else None for i,t in enumerate(idx_from_train_cf)]
