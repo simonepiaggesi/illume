@@ -22,6 +22,10 @@ datasets = {
     'aids':('aids.csv'),
     'spam':('spam.csv'),
     'australian':('australian.csv'),
+    'ctg':('ctg.csv'),
+    'ecoli':('ecoli.csv'),
+    'wine':('wine.csv'),
+    'yeast':('yeast.csv')
 }
 
 def get_tabular_dataset(name, path='./dataset/', test_size=0.2, random_state=None):
@@ -343,6 +347,34 @@ def get_australian_dataset(filename):
     df = pd.read_csv(filename, sep=',', skipinitialspace=True, na_values='?', keep_default_na=True, names=names)
     return df, class_name
 
+def get_wine_dataset(filename):
+    class_name = 'class'
+    df = pd.read_csv(filename, sep=',', skipinitialspace=True)
+    return df, class_name
+
+def get_yeast_dataset(filename):
+    class_name = 'name'
+    df = pd.read_csv(filename, sep=',', skipinitialspace=True)
+    return df, class_name
+
+def get_ctg_dataset(filename):
+    class_name = 'NSP'
+    df = pd.read_csv(filename, sep=',', skipinitialspace=True)
+    df = df.iloc[:-3, 3:]
+    df.drop(['DR'], axis=1, inplace=True)
+    df[['Tendency', 'A', 'B', 'C', 'D', 'E', 'AD','DE', 'LD', 'FS', 'SUSP', 'CLASS', 'NSP']]=\
+                    df[['Tendency', 'A', 'B', 'C', 'D', 'E', 'AD','DE', 'LD', 'FS', 'SUSP', 'CLASS', 'NSP']].astype(int).astype(str)
+    return df, class_name
+
+def get_ecoli_dataset(filename):
+
+    names= ['name','mcg','gvh','lip','chg','aac','alm1','alm2','class']
+
+    class_name = 'class'
+    df = pd.read_csv(filename, sep=' ', skipinitialspace=True, names=names)
+    df.drop(['name'], axis=1, inplace=True)
+    return df, class_name
+
 
 dataset_read_function_map = {
     'adult': get_adult_dataset,
@@ -360,5 +392,9 @@ dataset_read_function_map = {
     'breast':get_breast_dataset,
     'aids':get_aids_dataset, 
     'spam':get_spam_dataset,
-    'australian':get_australian_dataset
+    'australian':get_australian_dataset,
+    'ctg':get_ctg_dataset,
+    'ecoli':get_ecoli_dataset,
+    'wine':get_wine_dataset,
+    'yeast':get_yeast_dataset
 }
