@@ -41,11 +41,11 @@ def get_tabular_dataset(name, path='./dataset/', test_size=0.2, random_state=Non
     X = df[feature_names].values.astype(np.float64)
     y = df[class_name].values
 
-    X_train0, X_test0, y_train, y_test = train_test_split(X, y, test_size=test_size, stratify=y, random_state=random_state)
+    X_train_orig, X_test_orig, y_train, y_test = train_test_split(X, y, test_size=test_size, stratify=y, random_state=random_state)
 
     scaler = StandardScaler()
 
-    X_train, X_test = (X_train0.copy(), X_test0.copy())
+    X_train, X_test = (X_train_orig.copy(), X_test_orig.copy())
 
     if len(numeric_columns)>0:
         numeric_idx = [idx for idx,f in enumerate(feature_names) if f in numeric_columns]
@@ -56,8 +56,8 @@ def get_tabular_dataset(name, path='./dataset/', test_size=0.2, random_state=Non
         'scaler': scaler,
         'seed':random_state,
         'name': name,
-        'X_train0': X_train0,
-        'X_test0': X_test0,
+        'X_train_orig': X_train_orig,
+        'X_test_orig': X_test_orig,
         'X_train': X_train,
         'X_test': X_test,
         'y_train': y_train,
