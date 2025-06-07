@@ -207,7 +207,7 @@ def batch_norm(X, axis=0):
 
 
 class ILLUME(torch.nn.Module):
-    def __init__(self, encdec='linear', latent_dim=2, max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
+    def __init__(self, encdec='local_linear', latent_dim=2, max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
         super().__init__()
 
         self.encdec = encdec  #'linear' , 'local_linear'
@@ -299,8 +299,7 @@ class ILLUME(torch.nn.Module):
 
         self.params_dict = params_dict
 
-        self.W_train, self.Z_train = self.transform(self.X_train, num_k_sparse=self.params_dict['num_k'])
-        _, self.Z_val = self.transform(self.X_val, num_k_sparse=self.params_dict['num_k'])
+        self.W_train, self.Z_train = self.transform(self.X_train, num_k_sparse=params_dict['num_k'])
 
         if (self.W_train.shape[0]==1) and (self.X_train.shape[0]>1):
             self.W_train = np.repeat(self.W_train, self.X_train.shape[0], axis=0)
@@ -308,7 +307,13 @@ class ILLUME(torch.nn.Module):
         return train_losses, test_losses
 
 
-    def explain(self, class_label=1):
+    def explain_linear(self, class_label=1, num_k=None):
+
+        self.W_train, self.Z_train = self.transform(self.X_train, num_k_sparse=num_k)
+        _, self.Z_val = self.transform(self.X_val, num_k_sparse=num_k)
+
+        if (self.W_train.shape[0]==1) and (self.X_train.shape[0]>1):
+            self.W_train = np.repeat(self.W_train, self.X_train.shape[0], axis=0)
 
         self.y_train_bb = (np.argmax(self.y_train, axis=1)==class_label).astype(int)
         self.y_val_bb = (np.argmax(self.y_val, axis=1)==class_label).astype(int)
@@ -333,6 +338,19 @@ class ILLUME(torch.nn.Module):
         print(f'Generating feature importance for training set.')
         self.Ex_train = self._get_feature_importance_training()
         print()
+
+        return
+
+    def explain_dectree(self, class_label=1, num_k=None):
+
+        self.W_train, self.Z_train = self.transform(self.X_train, num_k_sparse=num_k)
+        _, self.Z_val = self.transform(self.X_val, num_k_sparse=num_k)
+
+        if (self.W_train.shape[0]==1) and (self.X_train.shape[0]>1):
+            self.W_train = np.repeat(self.W_train, self.X_train.shape[0], axis=0)
+
+        self.y_train_bb = (np.argmax(self.y_train, axis=1)==class_label).astype(int)
+        self.y_val_bb = (np.argmax(self.y_val, axis=1)==class_label).astype(int)
 
         print(f'Training Decision Tree surrogate.')
         self.dtree, f1 = tree_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
@@ -517,12 +535,11 @@ class ILLUME(torch.nn.Module):
             X = torch.cat([ (X[:,idx]==X[:,idx].max(dim=1).values[:,None]).float() if len(idx)>1 else X[:,idx] for idx in self.idx_num_cat], axis=1)
         return X.cpu().detach().numpy() 
 
-
-    def get_feature_importance(self, x_test, y_test_bb, class_label=1):
+    def get_feature_importance(self, x_test, y_test_bb, class_label=1, num_k=None):
 
         y_test_bb = (y_test_bb==class_label).astype(int)
 
-        w_test, z_test = self.transform(x_test, num_k_sparse=self.params_dict['num_k'])
+        w_test, z_test = self.transform(x_test, num_k_sparse=num_k)
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
@@ -540,11 +557,11 @@ class ILLUME(torch.nn.Module):
 
         return ex_test
 
-    def get_decision_rules(self, x_test, y_test_bb, class_label=1):
+    def get_decision_rules(self, x_test, y_test_bb, class_label=1, num_k=None):
 
         y_test_bb = (y_test_bb==class_label).astype(int)
 
-        w_test, z_test = self.transform(x_test, num_k_sparse=self.params_dict['num_k'])
+        w_test, z_test = self.transform(x_test, num_k_sparse=num_k)
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
@@ -566,11 +583,11 @@ class ILLUME(torch.nn.Module):
         return ex_dict_test
 
 
-    def get_decision_crules(self, x_test, y_test_bb, class_label=1):
+    def get_decision_crules(self, x_test, y_test_bb, class_label=1, num_k=None):
 
         y_test_bb = (y_test_bb==class_label).astype(int)
 
-        w_test, z_test = self.transform(x_test, num_k_sparse=self.params_dict['num_k'])
+        w_test, z_test = self.transform(x_test, num_k_sparse=num_k)
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
