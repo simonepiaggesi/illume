@@ -28,7 +28,6 @@ import torch
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from catboost import CatBoostClassifier
-from interpret.glassbox import ExplainableBoostingClassifier
 from sklearn.pipeline import Pipeline
 
 
