@@ -15,7 +15,7 @@ import pickle
 from sklearn.preprocessing import OrdinalEncoder, MinMaxScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
 
-from utils import logistic_eval, tree_eval
+from utils import linear_eval, tree_eval
 from expl_utils import get_rule_explanation_all, decode_latent_rule_complete, inverse_transform_rule_complete, fix_cat_rule_complete
 from scipy.spatial.distance import cdist
 
@@ -23,7 +23,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 flatten = lambda m: [item for row in m for item in row]
         
-class LinearEncDec(nn.Module):
+class LinearAutoEnc(nn.Module):
     def __init__(self, input_dim, latent_dim):
         super(LinearEncDec, self).__init__()
 
@@ -33,16 +33,13 @@ class LinearEncDec(nn.Module):
         self.weight = nn.Parameter(nn.init.uniform_(torch.Tensor(latent_dim, input_dim), 
                                                     a=-1./np.sqrt(input_dim),b=1./np.sqrt(input_dim)))
 
-        dec_hidden_dims = np.logspace(np.log2(latent_dim), np.log2(input_dim), num=4, base=2).astype(int)[1:-1]
-        self.decoder = MLP(latent_dim, list(dec_hidden_dims)+[input_dim], bias=True)
-
     def encode(self, x, num_k=None):
         w = self.get_weight(num_k)
         w_norm = w/torch.norm(w, p=2, dim=-1)[:,None]
         z = torch.mm(x, torch.t(w_norm)) 
         return w_norm[None,:,:], z
     def decode(self, z):
-        x_hat = self.decoder(z)
+        x_hat = torch.mm(z, torch.t(self.weight)) 
         return x_hat
     def forward(self, x, num_k_sparse=None):
         w, z = self.encode(x, num_k_sparse)
@@ -60,27 +57,23 @@ class LinearEncDec(nn.Module):
 
 
 class LocalLinearAutoEnc(nn.Module):
-    def __init__(self, input_dim, latent_dim):
+    def __init__(self, input_dim, latent_dim, mlp_layers):
         super(LocalLinearAutoEnc, self).__init__()
 
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        enc_hidden_dims = np.logspace(np.log2(input_dim), np.log2(input_dim*latent_dim), num=4, base=2).astype(int)[1:-1]
+        enc_hidden_dims = np.logspace(np.log2(input_dim), np.log2(input_dim*latent_dim), num=mlp_layers+1, base=2).astype(int)[1:-1]
         self.encoder = MLP(input_dim, list(enc_hidden_dims)+[input_dim*latent_dim], bias=True)
-
-        dec_hidden_dims = np.logspace(np.log2(latent_dim), np.log2(input_dim*latent_dim), num=4, base=2).astype(int)[1:-1]
-        self.decoder = MLP(latent_dim, list(dec_hidden_dims)+[input_dim*latent_dim], bias=True)
         
     def encode(self, x, num_k=None):
-        w = self.get_weight(torch.reshape(self.encoder(x), (-1, self.latent_dim, self.input_dim)), num_k)
+        self.weight = torch.reshape(self.encoder(x), (-1, self.latent_dim, self.input_dim))
+        w = self.get_weight(self.weight, num_k)
         w_norm = w/torch.norm(w, p=2, dim=-1)[:,:,None]
         z = torch.bmm(torch.unsqueeze(x, dim=1), torch.transpose(w_norm, 1,2)).squeeze()
         return w_norm, z
     def decode(self, z):
-        w = torch.reshape(self.decoder(z), (-1, self.input_dim, self.latent_dim))
-        w_norm = w/torch.norm(w, p=2, dim=-1)[:,:,None]
-        x_hat = torch.bmm(torch.unsqueeze(z, dim=1), torch.transpose(w_norm, 1,2)).squeeze()
+        x_hat = torch.bmm(torch.unsqueeze(z, dim=1), self.weight).squeeze()
         return x_hat
     def forward(self, x, num_k_sparse=None):
         w, z = self.encode(x, num_k_sparse)
@@ -102,7 +95,6 @@ def compute_similarity_z(Z, sigma=1):
     return M / (torch.ones([M.shape[0],M.shape[1]]).to(device)*(torch.sum(M, axis = 0))).transpose(0,1)
 
 def compute_similarity_w(W, sigma=1):
-    
     D = 1 - torch.matmul(W[:,0,:], W[:,0,:].T)
     for l in range(1, W.shape[1]):
         D += 1 - torch.matmul(W[:,l,:], W[:,l,:].T)
@@ -186,6 +178,7 @@ def rec_loss_function(X, X_hat, idx_cat_lol):
 
 
 def compute_jacobian(x, fx):
+    #from https://github.com/AmanDaVinci/SENN
     b = x.shape[0]
     n = x.shape[-1]
     m = fx.shape[-1]
@@ -207,12 +200,14 @@ def batch_norm(X, axis=0):
 
 
 class ILLUME(torch.nn.Module):
-    def __init__(self, encdec='local_linear', latent_dim=2, max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
+    def __init__(self, encdec='local_linear', latent_dim=2, mlp_layers=3, 
+                 max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
         super().__init__()
 
         self.encdec = encdec  #'linear' , 'local_linear'
 
         self.latent_dim=latent_dim
+        self.mlp_layers=mlp_layers
 
         self.max_epochs=max_epochs
         self.early_stopping=early_stopping
@@ -245,14 +240,17 @@ class ILLUME(torch.nn.Module):
             if self.encdec == 'local_linear':
                 self.model = LocalLinearAutoEnc(self.input_dim, self.latent_dim).to(device)
             elif self.encdec == 'linear':
-                self.model = LinearEncDec(self.input_dim, self.latent_dim).to(device)
+                self.model = LinearAutoEnc(self.input_dim, self.latent_dim).to(device)
 
         num_trainable_params = sum([p.numel() for p in self.model.parameters()])
-        #print('num. parameters = ' + str(num_trainable_params))
+        print('num. parameters = ' + str(num_trainable_params))
 
         if init_path!=None:
             assert(os.path.isfile(init_path))
             self.model.load_state_dict(torch.load(init_path, map_location=device))
+
+        model_params = list(self.model.parameters())
+        self.optimizer = torch.optim.Adam(model_params, lr=self.learning_rate)
 
     def load(self, X, y, idx_num_cat, init_path):
 
@@ -319,7 +317,7 @@ class ILLUME(torch.nn.Module):
         self.y_val_bb = (np.argmax(self.y_val, axis=1)==class_label).astype(int)
 
         print(f'Training Logistic Regression surrogate.')
-        self.logreg, f1 = logistic_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
+        self.logreg, f1 = linear_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
         print('LR surrogate score:', '%0.4f'%f1)
 
         self.lrd = {'X':self.Z_train,
@@ -439,9 +437,6 @@ class ILLUME(torch.nn.Module):
         test_dataset = TensorDataset(torch.tensor(self.X_val).float().to(device), torch.tensor(self.y_val).float().to(device))
         test_loader = DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False) 
 
-        model_params = list(self.model.parameters())
-        optimizer = torch.optim.Adam(model_params, lr=self.learning_rate)
-
         l_rec, l_kld, l_orth, l_corr, l_jac = lambdas
 
         epoch_train_losses = []
@@ -461,12 +456,12 @@ class ILLUME(torch.nn.Module):
                 batch_rec, batch_kld, batch_orth, batch_corr, batch_jac, batch_loss = [], [], [], [], [], []
                 for batch, (X_batch, Y_batch) in enumerate(train_loader):
 
-                    optimizer.zero_grad()
+                    self.optimizer.zero_grad()
                     rec_loss, kld_loss, orth_loss, corr_loss, jac_loss = self._step(X_batch, Y_batch, k)
                     
                     total_loss = l_rec*rec_loss + l_kld*kld_loss + l_orth*orth_loss + l_corr*corr_loss + l_jac*jac_loss  
                     total_loss.backward()
-                    optimizer.step()
+                    self.optimizer.step()
                     
                     batch_loss.append(total_loss.item())
                     batch_rec.append(rec_loss.item())
@@ -511,6 +506,7 @@ class ILLUME(torch.nn.Module):
                         best = epoch_val_losses[-1][-1]
                         best_epoch = epoch
                         torch.save(self.model.state_dict(), dname+'/ModelTemp.pt')
+                        torch.save(self.optimizer.state_dict(), dname+'/OptTemp.pt')
                     else:
                         wait += 1
                     pbar.postfix[7]["value"] = wait
@@ -519,6 +515,7 @@ class ILLUME(torch.nn.Module):
                 epoch += 1
                 pbar.update()
             self.model.load_state_dict(torch.load(dname+'/ModelTemp.pt'))
+            self.optimizer.load_state_dict(torch.load(dname+'/OptTemp.pt'))
 
         return epoch_train_losses, epoch_val_losses
 

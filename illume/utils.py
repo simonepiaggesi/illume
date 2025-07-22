@@ -174,7 +174,7 @@ def tree_eval(Z_train, Y_train, Z_test, Y_test, f1_average='macro',
     return best_clf, f1_score(Y_test, Y_pred, average=f1_average)    
 
 
-def logistic_eval(Z_train, Y_train, Z_test, Y_test, f1_average='macro',
+def linear_eval(Z_train, Y_train, Z_test, Y_test, f1_average='macro',
                     param_grid = {'penalty' : ['l1', 'l2'],
                                   'C': [0.001, 0.01, 0.05, 0.1, 1., 10.],
                                   'max_iter' : [100, 1000, 2000, 5000]}, 
