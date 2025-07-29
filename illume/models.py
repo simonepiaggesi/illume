@@ -392,12 +392,10 @@ class ILLUME(torch.nn.Module):
 
     def _get_decision_crules_training(self):
 
-        y_train_bb = np.round(self.y_train[:,1])
-
         idx_train = np.arange(self.Z_train.shape[0])
-        cond_train = self.dtree.predict(self.Z_train)==y_train_bb
+        cond_train = self.dtree.predict(self.Z_train)==self.y_train_bb
             
-        conds_train_cf = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))!=y_train_bb, cond_train) for z in self.Z_train], dtype=bool)
+        conds_train_cf = np.array([np.logical_and(self.dtree.predict(z.reshape(1,-1))!=self.y_train_bb, cond_train) for z in self.Z_train], dtype=bool)
         idx_from_train_cf = [cdist(z.reshape(1,-1), self.Z_train, metric='cosine')[0][conds_train_cf[i]].argsort()[0] if np.any(conds_train_cf[i]) 
                              else None for i,z in enumerate(self.Z_train)]
         idx_from_train_cf = [idx_train[conds_train_cf[i]][t] if np.any(conds_train_cf[i]) 
