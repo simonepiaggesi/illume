@@ -1,0 +1,404 @@
+import copy
+import numpy as np
+import matplotlib.pyplot as plt
+
+from collections import defaultdict
+
+from sympy import diff, re, simplify
+from scipy.spatial.distance import cdist
+from sklearn.datasets import make_classification
+
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.neighbors import KNeighborsClassifier
+
+from .rule import get_rule
+from .symexpr import generate_expression, gen_classification_symbolic, eval_multinomial
+
+
+def generate_synthetic_rule_based_classifier(n_samples=1000, n_features=2, n_all_features=2, random_state=1, factor=0,
+                                            sampling=0.5, explore_domain=False):
+    X, y = make_classification(n_samples=n_samples, n_features=n_features, n_informative=n_features, n_redundant=0,
+                               n_repeated=0, random_state=random_state, n_clusters_per_class=1)
+
+    X0 = copy.deepcopy(X)
+    Y0 = copy.deepcopy(y)
+
+    X += factor * np.random.random(size=X.shape)
+    X = StandardScaler().fit_transform(X)
+    f_min = [X[:, i].min() - sampling*2 for i in range(n_features)]
+    f_max = [X[:, i].max() + sampling*2 for i in range(n_features)]
+
+
+    if explore_domain:
+        ff = np.meshgrid(*[np.arange(f_min[i], f_max[i], sampling) for i in range(n_features)], copy=False)
+        values = [ff[i].ravel() for i in range(n_features)]
+        X_new = np.c_[values].T
+    else:
+        ff = None
+        X_new = X
+
+    knn = KNeighborsClassifier(3)
+    knn.fit(X, y)
+
+    Y_new_pp = knn.predict_proba(X_new)[:, 1]
+    # Y_new = Y_new.reshape(ff[0].shape)
+    # Y_new = Y_new.astype(int)
+    Y_new = knn.predict(X_new)
+
+    # y_new = Y_new.ravel()
+    dt = DecisionTreeClassifier()
+    dt.fit(X_new, Y_new)
+
+    feature_names = ['x%s' % i for i in range(n_all_features)]
+    class_name = 'class'
+    class_values = [i for i in range(2)]
+
+    def predict_proba(X):
+        X = X[:, :n_features]
+        return dt.predict_proba(X)
+
+    def predict(X):
+        X = X[:, :n_features]
+        return dt.predict(X)
+
+    srbc = {
+        'dt': dt,
+        'ff': ff,
+        'X': X_new,
+        'Y': Y_new,
+        'Ypp': Y_new_pp,
+        'feature_names': feature_names,
+        'class_name': class_name,
+        'class_values': class_values,
+        'predict_proba': predict_proba,
+        'predict': predict,
+        'X0': X0,
+        'Y0': Y0,
+    }
+
+    return srbc
+
+
+def get_rule_explanation(x, srbc, n_features, get_values=False):
+
+    dt = srbc['dt']
+    feature_names = srbc['feature_names']
+    class_name = srbc['class_name']
+    class_values = srbc['class_values']
+    numeric_columns = srbc['numeric_columns']
+    rule = get_rule(x[:n_features], dt, feature_names, class_name, class_values, numeric_columns)
+
+    explanation = list()
+    rule_premise = defaultdict(float)
+    for p in rule.premises:
+        sign = 1 if p.op == '>' else -1
+        val = sign * p.thr
+        rule_premise[p.att] += val
+
+    for feature in sorted(feature_names):
+        if not get_values:
+            val = 1 if feature in rule_premise else 0
+            explanation.append(val)
+        else:
+            val = rule_premise[feature] if feature in rule_premise else 0.0
+            explanation.append(val)
+
+    explanation = np.array(explanation)
+
+    return explanation
+
+def get_rule_explanation_complete(x, srbc, n_features):
+
+    dt = srbc['dt']
+    feature_names = srbc['feature_names']
+    class_name = srbc['class_name']
+    class_values = srbc['class_values']
+    numeric_columns = srbc['numeric_columns']
+    rule = get_rule(x[:n_features], dt, feature_names, class_name, class_values, numeric_columns)
+
+    explanation_dict = dict()
+    for f in feature_names:
+        explanation_dict[(f, '<=')] = np.inf
+        explanation_dict[(f, '>')] = -np.inf
+
+    for p in rule.premises:
+        explanation_dict[(p.att, p.op)] = p.thr
+
+    return explanation_dict
+
+def get_rule_explanation_all(X_test, srbc, n_features, get_values=False):
+
+    dt = srbc['dt']
+    feature_names = srbc['feature_names']
+    class_name = srbc['class_name']
+    class_values = srbc['class_values']
+    numeric_columns = srbc['numeric_columns']
+
+    rules = [get_rule(x[:n_features], dt, feature_names, class_name, class_values, numeric_columns) for x in X_test]
+
+    explanation_mask_list = [] 
+    explanation_dict_list = []
+
+    for rule in rules:
+
+        explanation_mask = list()
+        explanation_dict = dict()
+        rule_premise = defaultdict(float)
+        for p in rule.premises:
+            sign = 1 if p.op == '>' else -1
+            val = sign * p.thr
+            rule_premise[p.att] += val
+    
+            explanation_dict[(p.att, p.op)] = p.thr
+    
+        for feature in sorted(feature_names):
+            if not get_values:
+                val = 1 if feature in rule_premise else 0
+                explanation_mask.append(val)
+            else:
+                val = rule_premise[feature] if feature in rule_premise else 0.0
+                explanation_mask.append(val)
+    
+            if (feature, '<=') not in explanation_dict:
+                explanation_dict[(feature, '<=')] = np.inf
+            if (feature, '>') not in explanation_dict:
+                explanation_dict[(feature, '>')] = -np.inf
+    
+        explanation_mask = np.array(explanation_mask)
+        explanation_mask_list.append(explanation_mask)
+        explanation_dict_list.append(explanation_dict)
+
+    return explanation_mask_list, explanation_dict_list
+
+
+def generate_synthetic_linear_classifier(expr=None, n_features=2, n_all_features=2, 
+                                         random_state=1, n_samples=1000,
+                                         p_binary=0.7, p_parenthesis=0.3):
+    feature_names = None
+    if expr is None:
+        if random_state is not None:
+            np.random.seed(random_state)
+
+        feature_names = ['x%s' % i for i in range(n_all_features)]
+        scope = feature_names[:n_features]
+
+        while True:
+            # expr = generate_expression(scope, num_operations=num_operations,
+            #                             p_binary=p_binary, p_parenthesis=p_parenthesis)
+            expr = generate_expression(scope, p_binary=p_binary, p_parenthesis=p_parenthesis)
+            expr = str(simplify(expr))
+            if np.sum([1 if expr.count(f) > 0 else 0 for f in scope]) == n_features:
+                break
+
+    X, Y, Y1 = gen_classification_symbolic(expr, n_samples=n_samples, flip_y=0.0)
+    class_name = 'class'
+    class_values = [i for i in range(2)]
+
+    evals = Y1
+    evals_binary = Y
+
+    evals0 = evals[evals_binary == 0]
+    evals1 = evals[evals_binary == 1]
+
+    mm0 = MinMaxScaler(feature_range=(0, 0.5))
+    mm0.fit(evals0.reshape(-1, 1))
+    mm1 = MinMaxScaler(feature_range=(0.5, 1.0))
+    mm1.fit(evals1.reshape(-1, 1))
+
+    def predict_proba(X):
+        X = X[:, :n_features]
+        evals = list()
+        for x in X:
+            evals.append(re(eval_multinomial(expr, vals=list(x))))
+        evals = np.array(evals)
+        evals = np.array(evals, dtype=np.float)
+        evals_binary = evals > 0
+        evals_binary = evals_binary.flatten()
+        evals_binary = np.array(evals_binary, dtype=int)
+
+        evals_scaled = list()
+        for x, y in zip(evals, evals_binary):
+            if np.isinf(x):
+                val = 1.0 if x == +np.inf else 0.0
+            elif np.isnan(x):
+                val = 0.0
+            else:
+                if y == 0:
+                    val = mm0.transform(x.reshape(-1, 1))[0][0]
+                else:
+                    val = mm1.transform(x.reshape(-1, 1))[0][0]
+                val = max(0.0, min(val, 1.0))
+            evals_scaled.append([1.0 - val, val])
+
+        evals_scaled = np.array(evals_scaled)
+        return evals_scaled
+
+    def predict(X):
+        proba = predict_proba(X)
+        return np.argmax(proba, axis=1)
+
+    if feature_names is None:
+        feature_names = ['x%s' % i for i in range(n_all_features)]
+
+    slc = {
+        'expr': expr,
+        'X': X,
+        'Y': Y,
+        'Y1': Y1,
+        'feature_names': feature_names,
+        'class_name': class_name,
+        'class_values': class_values,
+        'predict_proba': predict_proba,
+        'predict': predict,
+    }
+
+    return slc
+
+
+def get_feature_importance_explanation(x, slc, n_features, get_values=True, get_closest_point=False):
+
+    x = x[:n_features]
+
+    expr = slc['expr']
+    X = slc['X']
+    Y = slc['Y']
+    feature_names = slc['feature_names']
+
+    y = np.array(np.array([re(eval_multinomial(expr, vals=list(x)))]) > 0, dtype=int)[0]
+
+    X1 = X[np.where(Y != y)]
+    dist1 = cdist(X1, x.reshape(1, -1)).ravel()
+    index = np.argsort(dist1)[0]
+    cx1 = X1[index]  # closest point to x with different label
+
+    X2 = X[np.where(Y == y)]
+    dist2 = cdist(X2, cx1.reshape(1, -1)).ravel() * 0.9 + cdist(X2, x.reshape(1, -1)).ravel() * 0.1
+    index = np.argsort(dist2)[0]
+    cx = X2[index]  # closet point to cx with same label of x
+
+    explanation = list()
+    for i in range(n_features):
+        dexpr = diff(expr, 'x%s' % i)
+        subs = {'x%s' % fi: v for fi, v in zip(range(n_features), cx)}
+        try:
+            val = float(re(dexpr.evalf(subs=subs)))
+        except TypeError:
+            val = 0.0
+        val = val if get_values else 1
+        explanation.append(val)
+
+    for i in range(n_features, len(feature_names)):
+        val = 0.0 if get_values else 0
+        explanation.append(val)
+
+    explanation = np.array(explanation)
+
+    if get_closest_point:
+        return explanation, cx
+
+    return explanation
+
+
+def generate_synthetic_linear_classifier2(n_features=2, n_all_features=2, n_coefficients=2,
+                                          random_state=1, p_sign=0.5):
+
+    if random_state is not None:
+        np.random.seed(random_state)
+
+    feature_names = None
+    m = n_features
+    k = n_coefficients
+    coef_list = set()
+    for i in range(k):
+        m1 = np.random.randint(1, m + 1)
+        coef_idx = np.random.choice(np.arange(m), size=m1, replace=False)
+        coef = np.zeros(m)
+        coef_val = np.array([np.random.choice([-1.0, 1.0], p=[p_sign, 1-p_sign], size=1)[0] * np.random.random()
+                             for _ in range(m1)])
+        coef[coef_idx] = coef_val
+        coef_list.add(tuple(coef))
+    coef_list = np.array([np.array(c) for c in coef_list])
+
+    def predict_proba(X):
+        X = X[:, :n_features]
+        evals_list = list()
+        for x in X:
+            dist = np.abs(np.sum(x * coef_list, axis=1))
+            selected_coef = np.argmax(dist)
+            coef = coef_list[selected_coef]
+            val = np.sum(x * coef)
+            eval = 1.0 if val > 0 else 0.0
+            evals_list.append(np.array([1-eval, eval]))
+        evals_list = np.array(evals_list)
+        return evals_list
+
+    def predict(X):
+        proba = predict_proba(X)
+        return np.argmax(proba, axis=1)
+
+    if feature_names is None:
+        feature_names = ['x%s' % i for i in range(n_all_features)]
+
+    class_name = 'class'
+    class_values = [i for i in range(2)]
+
+    slc = {
+        'feature_names': feature_names,
+        'class_name': class_name,
+        'class_values': class_values,
+        'predict_proba': predict_proba,
+        'predict': predict,
+        'coef_list': coef_list,
+    }
+
+    return slc
+
+
+def get_feature_importance_explanation2(x, slc, n_features, n_all_features, get_values=True):
+
+    x = x[:n_features]
+    coef_list = slc['coef_list']
+
+    dist = np.abs(np.sum(x * coef_list, axis=1))
+    selected_coef = np.argmax(dist)
+    coef = coef_list[selected_coef].tolist()
+
+    explanation = coef
+    if not get_values:
+        explanation = [1 if v != 0 else 0 for v in explanation]
+
+    for i in range(n_features, n_all_features):
+        val = 0.0 if get_values else 0
+        explanation.append(val)
+
+    explanation = np.array(explanation)
+
+    return explanation
+
+
+def main():
+
+    m = 10
+    n = 10
+
+    n_features = 8
+    random_state = None
+
+    slc = generate_synthetic_linear_classifier2(n_features, n_all_features=m, n_coefficients=10,
+                                                random_state=random_state, p_sign=0.5)
+
+    X_test = np.random.uniform(size=(n, m))
+    for x in X_test:
+        expl_bin = get_feature_importance_explanation2(x, slc, n_features, n_all_features=m, get_values=True)
+        expl_val = get_feature_importance_explanation2(x, slc, n_features, n_all_features=m, get_values=False)
+        print(expl_bin, expl_val)
+
+    print('------')
+    print(slc['coef_list'])
+
+
+if __name__ == "__main__":
+    main()
+
