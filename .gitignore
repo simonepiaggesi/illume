@@ -1,4 +1,11 @@
 illume/.ipynb_checkpoints/
 illume/__pycache__/
+illume/scripts/anchor/.ipynb_checkpoints/
+illume/scripts/anchor/__pycache__/
+illume/scripts/lore_sa/.ipynb_checkpoints/
+illume/scripts/lore_sa/__pycache__/
+illume/scripts/seneca/.ipynb_checkpoints/
+illume/scripts/seneca/__pycache__/
 illume/blackboxes/
 illume/models/
+illume/results/
