@@ -25,7 +25,7 @@ flatten = lambda m: [item for row in m for item in row]
         
 class LinearAutoEnc(nn.Module):
     def __init__(self, input_dim, latent_dim):
-        super(LinearEncDec, self).__init__()
+        super(LinearAutoEnc, self).__init__()
 
         self.input_dim = input_dim
         self.latent_dim = latent_dim
