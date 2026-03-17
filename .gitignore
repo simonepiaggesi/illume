@@ -1,11 +1,36 @@
-illume/.ipynb_checkpoints/
-illume/__pycache__/
-illume/scripts/anchor/.ipynb_checkpoints/
-illume/scripts/anchor/__pycache__/
-illume/scripts/lore_sa/.ipynb_checkpoints/
-illume/scripts/lore_sa/__pycache__/
-illume/scripts/seneca/.ipynb_checkpoints/
-illume/scripts/seneca/__pycache__/
-illume/blackboxes/
-illume/models/
-illume/results/
+**/tmp*/
+**/temp*/
+
+# model checkpoints
+*.pt
+*.pth
+*.ckpt
+*.h5
+
+# data dumps
+*.npz
+*.npy
+*.feather
+*.parquet
+
+# stdout / stderr
+*.out
+*.err
+
+# python cache
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+#other folders
+experiments_paper/.ipynb_checkpoints/
+experiments_paper/__pycache__/
+experiments_paper/scripts/anchor/.ipynb_checkpoints/
+experiments_paper/scripts/anchor/__pycache__/
+experiments_paper/scripts/lore_sa/.ipynb_checkpoints/
+experiments_paper/scripts/lore_sa/__pycache__/
+experiments_paper/scripts/seneca/.ipynb_checkpoints/
+experiments_paper/scripts/seneca/__pycache__/
+experiments_paper/blackboxes/
+experiments_paper/models/
+experiments_paper/results/
