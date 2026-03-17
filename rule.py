@@ -244,46 +244,39 @@ def compact_premises(plist):
             compact_plist.append(alist[0])
     return compact_plist
 
-def get_counterfactual_rules_all(X_test, Y_test, dt, X, Y, feature_names, class_name, class_values, numeric_columns,
-                                features_map=None, features_map_inv=None, bb_predict=None):
+
+def get_counterfactual_rules_all(Z_test, Y_test, dt, Z, Y, 
+                                feature_names, class_name, class_values, numeric_columns):
 
     assert(np.unique(Y)[0]==0)
     assert(np.unique(Y)[1]==1)
     assert(np.unique(Y).shape[0]==2)
 
-    crules = np.array([get_rule(x, dt, feature_names, class_name, class_values, numeric_columns) for x in X], dtype=object)
+    crules = np.array([get_rule(z, dt, feature_names, class_name, class_values, numeric_columns) for z in Z], dtype=object)
     
-    Idx = np.arange(X.shape[0]) 
-    Idx = [Idx[np.where(Y == np.unique(Y)[1])[0]], Idx[np.where(Y == np.unique(Y)[0])[0]]]  
+    Idx = [np.arange(Z.shape[0])[Y == np.unique(Y)[1]], 
+           np.arange(Z.shape[0])[Y == np.unique(Y)[0]]]  
     
-    fconds_lists = [[(i, *get_falsified_conditions(vector2dict(x, feature_names), crules[i])) for i in Idx[y]] for x,y in zip(X_test, Y_test)]  
-    fconds_min = [min([a[2] for a in fc]) for fc in fconds_lists]
-    fconds_lists = [[(a[0], a[1]) for a in fc if a[2]==fc_min] for fc, fc_min in zip(fconds_lists, fconds_min)]
+    fconds_lists = [[(i, *get_falsified_conditions(vector2dict(z, feature_names), crules[i])) for i in Idx[y]] for z,y in zip(Z_test, Y_test)]  
 
     cfs_lists = []
-    for x, fc_list in zip(X_test, fconds_lists):
+    for z, fc_list in zip(Z_test, fconds_lists):
         delta_list = []
         icf_list = []
         
-        x_dist = cdist(x.reshape(1,-1), X[[i for i,r in fc_list]], metric='cosine')[0]
-        fc_list = sorted([(a[0], a[1], x_dist[i]) for i,a in enumerate(fc_list)], key=lambda t: t[2])
+        z_dist = cdist(z.reshape(1,-1), Z[[i for i,dlt,nbr in fc_list]], metric='cosine')[0]
+        fcd_list = sorted([(a[0], a[1], z_dist[i]) for i,a in enumerate(fc_list)], key=lambda t: t[2])
 
-        for i, delta, _ in fc_list:
+        for train_idx, delta, _ in fcd_list:
             if delta not in delta_list:
-                if bb_predict is not None:
-                    xc = apply_counterfactual(x, delta, feature_names, features_map, features_map_inv, numeric_columns)
-
-                    bb_outcomec = bb_predict(xc.reshape(1, -1))[0]
-                    bb_outcomec = class_values[bb_outcomec] 
-                    dt_outcomec = crules[i].cons
-                    if bb_outcomec != dt_outcomec:
-                        continue
 
                 delta_list.append(delta)
-                icf_list.append(i) 
+                icf_list.append(train_idx) 
+
         cfs_lists.append((icf_list, delta_list, list(crules[icf_list])))
 
     return cfs_lists
+
 
 def get_falsified_conditions(xd, crule):
     delta = list()
@@ -296,45 +289,3 @@ def get_falsified_conditions(xd, crule):
             delta.append(p)
             nbr_falsified_conditions += 1
     return delta, nbr_falsified_conditions
-
-
-def apply_counterfactual(x, delta, feature_names, features_map=None, features_map_inv=None, numeric_columns=None):
-    xd = vector2dict(x, feature_names)
-    xcd = copy.deepcopy(xd)
-    for p in delta:
-        if p.att in numeric_columns:
-            if p.thr == int(p.thr):
-                gap = 1.0
-            else:
-                decimals = list(str(p.thr).split('.')[1])
-                for idx, e in enumerate(decimals):
-                    if e != '0':
-                        break
-                gap = 1 / (10**(idx+1))
-            if p.op == '>':
-                xcd[p.att] = p.thr + gap
-            else:
-                xcd[p.att] = p.thr
-        else:
-            fn = p.att.split('=')[0]
-            if p.op == '>':
-                if features_map is not None:
-                    fi = list(feature_names).index(p.att)
-                    fi = features_map_inv[fi]
-                    for fv in features_map[fi]:
-                        xcd['%s=%s' % (fn, fv)] = 0.0
-                xcd[p.att] = 1.0
-
-            else:
-                if features_map is not None:
-                    fi = list(feature_names).index(p.att)
-                    fi = features_map_inv[fi]
-                    for fv in features_map[fi]:
-                        xcd['%s=%s' % (fn, fv)] = 1.0
-                xcd[p.att] = 0.0
-
-    xc = np.zeros(len(xd))
-    for i, fn in enumerate(feature_names):
-        xc[i] = xcd[fn]
-
-    return xc

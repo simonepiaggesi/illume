@@ -15,7 +15,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.neighbors import KNeighborsClassifier
 
-from rule import get_rule, get_counterfactual_rules_all
+from rule import get_rule
 
 
 def decode_latent_rule(w_latent, expl_binary):
@@ -205,76 +205,3 @@ def get_rule_explanation_all(X_test, srbc, n_features, get_values=False):
 
     return explanation_mask_list, explanation_dict_list
 
-
-def get_crule_explanation_all(X_test, Y_test, srbc, n_features, bb_predict=None, get_values=False):
-
-    dt = srbc['dt']
-    feature_names = srbc['feature_names']
-    class_name = srbc['class_name']
-    class_values = srbc['class_values']
-    numeric_columns = srbc['numeric_columns']
-
-    features_map, features_map_inv = (None, None)
-    if bb_predict is not None:
-        features_map, features_map_inv = (srbc['features_map'], srbc['features_map_inv'])
-
-    X = srbc['X']
-    Y = srbc['Y']
-    cfs_tuples = get_counterfactual_rules_all(X_test[:, :n_features], Y_test, dt, 
-                                              X[dt.predict(X)==Y, :n_features], Y[dt.predict(X)==Y], 
-                                            feature_names, class_name, class_values, numeric_columns, features_map, features_map_inv, bb_predict)
-
-    icfs_list = [] 
-    explanations_mask_list = [] 
-    explanations_dict_list = []
-    
-    for icfs, deltas, crules in cfs_tuples:
-    
-        assert(len(crules) == len(icfs))
-        explanations_mask = list()
-        explanations_dict = list()
-        
-        # for rule in crules:
-        #     explanation_mask = list()
-        #     explanation_dict = dict()
-        #     rule_premise = defaultdict(float)
-        #     for p in rule.premises:
-        #         sign = 1 if p.op == '>' else -1
-        #         val = sign * p.thr
-        #         rule_premise[p.att] += val
-    
-        #         explanation_dict[(p.att, p.op)] = p.thr
-
-        for delta in deltas:
-            explanation_mask = list()
-            explanation_dict = dict()
-            rule_premise = defaultdict(float)
-            for p in delta:
-                sign = 1 if p.op == '>' else -1
-                val = sign * p.thr
-                rule_premise[p.att] += val
-    
-                explanation_dict[(p.att, p.op)] = p.thr
-        
-            for feature in sorted(feature_names):
-                if not get_values:
-                    val = 1 if feature in rule_premise else 0
-                    explanation_mask.append(val)
-                else:
-                    val = rule_premise[feature] if feature in rule_premise else 0.0
-                    explanation_mask.append(val)
-    
-                if (feature, '<=') not in explanation_dict:
-                    explanation_dict[(feature, '<=')] = np.inf
-                if (feature, '>') not in explanation_dict:
-                    explanation_dict[(feature, '>')] = -np.inf
-            
-            explanation_mask = np.array(explanation_mask)
-            explanations_mask.append(explanation_mask)
-            explanations_dict.append(explanation_dict)
-
-        icfs_list.append(icfs)
-        explanations_mask_list.append(explanations_mask)
-        explanations_dict_list.append(explanations_dict)
-
-    return icfs_list, explanations_mask_list, explanations_dict_list

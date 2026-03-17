@@ -16,64 +16,36 @@ from sklearn.preprocessing import OrdinalEncoder, MinMaxScaler, OneHotEncoder
 from sklearn.model_selection import train_test_split
 
 from utils import linear_eval, tree_eval
-from expl_utils import get_rule_explanation_all, get_crule_explanation_all, decode_latent_rule_complete, inverse_transform_rule_complete, fix_cat_rule_complete
+from expl_utils import get_rule_explanation_all, get_crule_explanation_all, decode_latent_rule_complete, inverse_transform_rule_complete, fix_cat_rule_complete, simplify_rule_complete
 from scipy.spatial.distance import cdist
+
+from more_itertools import random_combination
+from itertools import product
+import random
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 flatten = lambda m: [item for row in m for item in row]
         
-class LinearAutoEnc(nn.Module):
-    def __init__(self, input_dim, latent_dim):
-        super(LinearAutoEnc, self).__init__()
-
-        self.input_dim = input_dim
-        self.latent_dim = latent_dim
-
-        self.weight = nn.Parameter(nn.init.uniform_(torch.Tensor(latent_dim, input_dim), 
-                                                    a=-1./np.sqrt(input_dim),b=1./np.sqrt(input_dim)))
-
-    def encode(self, x, num_k=None):
-        w = self.get_weight(num_k)
-        w_norm = w/torch.norm(w, p=2, dim=-1)[:,None]
-        z = torch.mm(x, torch.t(w_norm)) 
-        return w_norm[None,:,:], z
-    def decode(self, z):
-        x_hat = torch.mm(z, torch.t(self.weight)) 
-        return x_hat
-    def forward(self, x, num_k_sparse=None):
-        w, z = self.encode(x, num_k_sparse)
-        x_hat = self.decode(z)
-        return x_hat    
-    def get_weight(self, num_k=None):
-        if num_k == None or num_k >= self.input_dim:
-            return self.weight
-        else:
-            indices = torch.argsort(torch.abs(self.weight))[:,-num_k:]
-            mask = torch.zeros_like(self.weight)
-            mask.scatter_(1, indices, 1)
-            masked_weight = torch.mul(self.weight, mask)
-            return masked_weight
-
 
 class LocalLinearAutoEnc(nn.Module):
-    def __init__(self, input_dim, latent_dim, mlp_layers):
+    def __init__(self, input_dim, latent_dim, n_layers=3, dropout=0.0):
         super(LocalLinearAutoEnc, self).__init__()
 
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        enc_hidden_dims = np.logspace(np.log2(input_dim), np.log2(input_dim*latent_dim), num=mlp_layers+1, base=2).astype(int)[1:-1]
-        self.encoder = MLP(input_dim, list(enc_hidden_dims)+[input_dim*latent_dim], bias=True)
+        enc_hidden_dims = np.logspace(np.log2(input_dim), np.log2(input_dim*latent_dim), num=n_layers+1, base=2).astype(int)[1:-1]
+        self.encoder = MLP(input_dim, list(enc_hidden_dims)+[input_dim*latent_dim], bias=True, dropout=dropout)
         
     def encode(self, x, num_k=None):
         self.weight = torch.reshape(self.encoder(x), (-1, self.latent_dim, self.input_dim))
         w = self.get_weight(self.weight, num_k)
         w_norm = w/torch.norm(w, p=2, dim=-1)[:,:,None]
-        z = torch.bmm(torch.unsqueeze(x, dim=1), torch.transpose(w_norm, 1,2)).squeeze()
+        z = torch.bmm(torch.unsqueeze(x, dim=1), torch.transpose(w_norm, 1,2))[:, 0, :]
         return w_norm, z
     def decode(self, z):
-        x_hat = torch.bmm(torch.unsqueeze(z, dim=1), self.weight).squeeze()
+        x_hat = torch.bmm(torch.unsqueeze(z, dim=1), self.weight)[:, 0, :]
         return x_hat
     def forward(self, x, num_k_sparse=None):
         w, z = self.encode(x, num_k_sparse)
@@ -87,7 +59,8 @@ class LocalLinearAutoEnc(nn.Module):
             mask_batch = torch.zeros_like(w_batch)
             mask_batch.scatter_(2, indices, 1)
             masked_weight = torch.mul(w_batch, mask_batch)
-            return masked_weight
+            #return masked_weight
+            return w_batch + (masked_weight - w_batch).detach()
             
 def compute_similarity_z(Z, sigma=1):
     D = 1 - F.cosine_similarity(Z[:, None, :], Z[None, :, :], dim=-1)
@@ -104,14 +77,12 @@ def compute_similarity_w(W, sigma=1):
     return M / (torch.ones([M.shape[0],M.shape[1]]).to(device)*(torch.sum(M, axis = 0))).transpose(0,1)
 
 def compute_similarity_y(y, sigma=1):
-    D = torch.cdist(y, y)
+    # D = torch.cdist(y, y)
+    D = 1 - F.cosine_similarity(y[:, None, :], y[None, :, :], dim=-1)
     M = torch.exp((-D**2)/(2*sigma**2))
     return M / (torch.ones([M.shape[0],M.shape[1]]).to(device)*(torch.sum(M, axis = 0))).transpose(0,1)
 
-def compute_similarity_x(X, y=None, idx_cat=None, sigma=1):
-    if y:
-        D_class = torch.cdist(X[:,-y:], X[:,-y:])
-        X = X[:, :-y]
+def compute_similarity_x(X, idx_cat=None, sigma=1):
     if idx_cat:
         X_cat = X[:, idx_cat]
         X_cont = X[:, np.delete(range(X.shape[1]), idx_cat)]
@@ -124,15 +95,13 @@ def compute_similarity_x(X, y=None, idx_cat=None, sigma=1):
             D += ((m-h)/m) * D_cont
     else:
         D = 1 - F.cosine_similarity(X[:, None, :], X[None, :, :], dim=-1) 
-    if y:
-        D += D_class
     M = torch.exp((-D**2)/(2*sigma**2))
     return M / (torch.ones([M.shape[0],M.shape[1]]).to(device)*(torch.sum(M, axis = 0))).transpose(0,1)
 
 
 def kld_loss_function_zxy(X, Z, y, idx_cat=None, sigma=1):
     similarity_KLD = torch.nn.KLDivLoss(reduction='batchmean')
-    Sx = compute_similarity_x(X, None, idx_cat, sigma)
+    Sx = compute_similarity_x(X, idx_cat, sigma)
     Sz = compute_similarity_z(Z, sigma)
     loss = similarity_KLD(torch.log(Sz), Sx)
     if not torch.any(torch.isnan(y)):
@@ -143,7 +112,7 @@ def kld_loss_function_zxy(X, Z, y, idx_cat=None, sigma=1):
 
 def kld_loss_function_wxyz(X, W, Z, y, idx_cat=None, sigma=1):
     similarity_KLD = torch.nn.KLDivLoss(reduction='batchmean')
-    Sx = compute_similarity_x(X, None, idx_cat, sigma)
+    Sx = compute_similarity_x(X, idx_cat, sigma)
     Sw = compute_similarity_w(W, sigma)
     Sz = compute_similarity_z(Z, sigma)
 
@@ -205,14 +174,13 @@ def batch_norm(X, axis=0):
 
 
 class ILLUME(torch.nn.Module):
-    def __init__(self, encdec='local_linear', latent_dim=2, mlp_layers=3, 
+    def __init__(self, latent_dim=2, mlp_layers=3, dropout=0.0,
                  max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024, sigma=1):
         super().__init__()
 
-        self.encdec = encdec  #'linear' , 'local_linear'
-
         self.latent_dim=latent_dim
         self.mlp_layers=mlp_layers
+        self.dropout=dropout
 
         self.max_epochs=max_epochs
         self.early_stopping=early_stopping
@@ -242,11 +210,8 @@ class ILLUME(torch.nn.Module):
             self.idx_cat = None
 
         if 'model' not in self.__dict__['_modules']:
-            if self.encdec == 'local_linear':
-                self.model = LocalLinearAutoEnc(self.input_dim, self.latent_dim, self.mlp_layers).to(device)
-            elif self.encdec == 'linear':
-                self.model = LinearAutoEnc(self.input_dim, self.latent_dim).to(device)
-
+            self.model = LocalLinearAutoEnc(self.input_dim, self.latent_dim, self.mlp_layers, self.dropout).to(device)
+            
         num_trainable_params = sum([p.numel() for p in self.model.parameters()])
         print('num. parameters = ' + str(num_trainable_params))
 
@@ -261,7 +226,6 @@ class ILLUME(torch.nn.Module):
 
         self._set(X, y, idx_num_cat, init_path)
 
-
     def fit(self, X, y=None, idx_num_cat=None,
             params_dict={'num_k':None, 'l_rec':1.0, 'l_kld':1.0, 'l_so':1.0, 'l_co':1.0, 'l_st':1.0}, 
             init_path=None, seed=None):
@@ -269,6 +233,7 @@ class ILLUME(torch.nn.Module):
         self._set(X, y, idx_num_cat, init_path)
 
         if seed:
+            random.seed(seed)
             np.random.seed(seed)
             torch.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
@@ -313,7 +278,7 @@ class ILLUME(torch.nn.Module):
     def explain_linear(self, class_label=1, num_k=None):
 
         self.W_train, self.Z_train = self.transform(self.X_train, num_k_sparse=num_k)
-        _, self.Z_val = self.transform(self.X_val, num_k_sparse=num_k)
+        self.W_val, self.Z_val = self.transform(self.X_val, num_k_sparse=num_k)
 
         if (self.W_train.shape[0]==1) and (self.X_train.shape[0]>1):
             self.W_train = np.repeat(self.W_train, self.X_train.shape[0], axis=0)
@@ -322,7 +287,7 @@ class ILLUME(torch.nn.Module):
         self.y_val_bb = (np.argmax(self.y_val, axis=1)==class_label).astype(int)
 
         print(f'Training Logistic Regression surrogate.')
-        self.logreg, f1 = linear_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
+        self.logreg, f1 = linear_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='binary')
         print('LR surrogate score:', '%0.4f'%f1)
 
         self.lrd = {'X':self.Z_train,
@@ -338,16 +303,12 @@ class ILLUME(torch.nn.Module):
                    'Y_val':self.y_val_bb,
                 }
 
-        print(f'Generating feature importance for training set.')
-        self.Ex_train = self._get_feature_importance_training()
-        print()
-
         return
 
     def explain_dectree(self, class_label=1, num_k=None):
 
         self.W_train, self.Z_train = self.transform(self.X_train, num_k_sparse=num_k)
-        _, self.Z_val = self.transform(self.X_val, num_k_sparse=num_k)
+        self.W_val, self.Z_val = self.transform(self.X_val, num_k_sparse=num_k)
 
         if (self.W_train.shape[0]==1) and (self.X_train.shape[0]>1):
             self.W_train = np.repeat(self.W_train, self.X_train.shape[0], axis=0)
@@ -356,7 +317,7 @@ class ILLUME(torch.nn.Module):
         self.y_val_bb = (np.argmax(self.y_val, axis=1)==class_label).astype(int)
 
         print(f'Training Decision Tree surrogate.')
-        self.dtree, f1 = tree_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='macro')
+        self.dtree, f1 = tree_eval(self.Z_train, self.y_train_bb, self.Z_val, self.y_val_bb, f1_average='binary')
         print('DT surrogate score:', '%0.4f'%f1)
 
         self.dtd = {'X':self.Z_train,
@@ -372,11 +333,6 @@ class ILLUME(torch.nn.Module):
                'Y_val':self.y_val_bb,
                 }
 
-        print(f'Generating factual and counterfactual rules for training set.')
-        self.Ex_dict_train = self._get_rules_training()
-        self.Cx_dict_train, self.Cx_list_train = self._get_crules_training()
-        print()
-
         return
 
     def _get_feature_importance_training(self):
@@ -387,7 +343,7 @@ class ILLUME(torch.nn.Module):
 
     def _get_rules_training(self):
 
-        _, ez_dict_training = get_rule_explanation_all(self.Z_train, self.dtd, n_features=self.latent_dim, get_values=False)
+        _, ez_dict_training = get_rule_explanation_all(self.Z_train, self.dtd, n_features=self.latent_dim)
 
         ex_dict_training = [decode_latent_rule_complete(x, w, e, self.dtd) for x,w,e in zip(self.X_train, self.W_train, ez_dict_training)]
         ex_dict_training = [fix_cat_rule_complete(e, self.idx_num) for e in ex_dict_training]
@@ -398,11 +354,9 @@ class ILLUME(torch.nn.Module):
 
         cond_train = self.dtree.predict(self.Z_train)==self.y_train_bb
 
-        cf_idx_training, _, cz_dict_training = get_crule_explanation_all(self.Z_train, self.y_train_bb, self.dtd, n_features=self.latent_dim, get_values=False)
-
-        cx_dict_training = [[decode_latent_rule_complete(self.X_train[cond_train][cdx[i]], self.W_train[cond_train][cdx[i]], cz[i], self.dtd) 
-                                 for i in range(len(cdx))] for cdx,cz in zip(cf_idx_training, cz_dict_training)]
-        cx_dict_training = [[fix_cat_rule_complete(cx[i], self.idx_num) for i in range(len(cx))] for cx in cx_dict_training]
+        cf_idx_training, _, cx_dict_training = get_crule_explanation_all(self.Z_train, self.X_train, self.y_train_bb, 
+                                                                        self.X_train[cond_train], self.W_train[cond_train], 
+                                                                        self.dtd, n_features=self.latent_dim)
 
         cf_list_training = [np.atleast_2d(self.X_train[cond_train][cdx]) for cdx in cf_idx_training]
 
@@ -413,12 +367,8 @@ class ILLUME(torch.nn.Module):
         X_batch.requires_grad_(True)
         W_batch, Z_batch = self.model.encode(X_batch, num_k)
     
-        if self.encdec=='linear':
-            jac_loss = torch.tensor(0., requires_grad=True) 
-            kld_loss = kld_loss_function_zxy(X_batch, Z_batch, Y_batch, self.idx_cat, self.sigma)
-        else:
-            jac_loss = torch.mean((compute_jacobian(X_batch, Z_batch) - W_batch)**2, dim=[1,2]).mean() 
-            kld_loss = kld_loss_function_wxyz(X_batch, W_batch, Z_batch, Y_batch, self.idx_cat, self.sigma)
+        jac_loss = torch.mean((compute_jacobian(X_batch, Z_batch) - W_batch)**2, dim=[1,2]).mean() 
+        kld_loss = kld_loss_function_wxyz(X_batch, W_batch, Z_batch, Y_batch, self.idx_cat, self.sigma)
     
         orth_loss = orth_loss_function(torch.bmm(torch.abs(W_batch), 
                                   torch.transpose(torch.abs(W_batch), 1,2)))
@@ -533,6 +483,30 @@ class ILLUME(torch.nn.Module):
             X = torch.cat([ (X[:,idx]==X[:,idx].max(dim=1).values[:,None]).float() if len(idx)>1 else X[:,idx] for idx in self.idx_num_cat], axis=1)
         return X.cpu().detach().numpy() 
 
+
+    def _latent_update(self, xi, xnn, Wi, Wnn, clf):
+
+        zi = np.matmul(Wi, xi)
+        znn = np.matmul(Wnn, xnn)
+
+        yi = clf.predict([zi])
+        ynn = clf.predict([znn])
+        assert(np.all(yi != ynn))
+
+        dzw = np.matmul(Wnn-Wi, xi)
+        dzx = np.matmul(Wnn, xnn-xi)
+        assert(clf.predict([zi+dzx+dzw])==ynn)
+
+        gridw = [0.]+list(np.logspace(-3, 0, 100))
+        gridx = [0.]+list(np.logspace(-3, 0, 100))
+        gridwx = random_combination(product(gridw, gridx), 2999)
+
+        for aw, ax in sorted(list(gridwx)+[(1.,1.)], key=lambda x: x[0]+x[1]):
+            za = zi + aw*dzw + ax*dzx
+            if clf.predict([za])!=yi:
+                return za, Wi+aw*(Wnn-Wi), ax*dzx
+
+    
     def get_feature_importance(self, x_test, y_test_bb, class_label=1, num_k=None):
 
         y_test_bb = (y_test_bb==class_label).astype(int)
@@ -541,20 +515,29 @@ class ILLUME(torch.nn.Module):
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
+        # range indices of training set
         idx_train = np.arange(self.Z_train.shape[0])
+        # boolean indices where surrogate==black-box in training set
         cond_train = self.logreg.predict(self.Z_train)==self.y_train_bb
-        #mask_train = np.array([np.logical_and(self.logreg.predict(z.reshape(1,-1))==self.y_train_bb[cond_train], cond_train) for z in z_test], dtype=bool)
-        mask_train = np.array([self.logreg.predict(z.reshape(1,-1))==self.y_train_bb[cond_train] for z in z_test], dtype=bool)
+        # boolean indices where (surrogate==black-box) but (y_train_surr!=y_test_surr) 
+        mask_train = np.array([self.logreg.predict(z.reshape(1,-1))!=self.y_train_bb[cond_train] for z in z_test], dtype=bool)
 
+        # indices of the closest training instance among the training instances with (surrogate==black-box) and (y_train_surr!=y_test_surr) for each test instance
         idx_from_train = [cdist(z.reshape(1,-1), self.Z_train[cond_train], metric='cosine')[0][mask_train[i]].argsort()[0] if np.any(mask_train[i]) else None for i,z in enumerate(z_test)]
-        idx_from_train = [idx_train[cond_train][mask_train[i]][t] if np.any(mask_train[i]) else None for i,t in enumerate(idx_from_train)]
+        # indices of the closest training instance among all training instances for each test instance
+        self.idx_from_train = [idx_train[cond_train][mask_train[i]][t] if np.any(mask_train[i]) else None for i,t in enumerate(idx_from_train)]
 
-        ex_test = (self.logreg.coef_[None,:,:].transpose(0,2,1)*w_test).sum(axis=1)
+        # latent refinement
+        _, w_test_new, _ = zip(*[(z_test[i], w_test[i], np.zeros_like(z_test[i])) if (self.logreg.predict(z_test[[i]])==y_test_bb[i] or ~np.any(mask_train[i])) else
+                            self._latent_update(x_test[i], self.X_train[self.idx_from_train[i]], w_test[i], self.W_train[self.idx_from_train[i]], self.logreg) for i,_ in enumerate(z_test)])
 
-        ex_test = [ex if self.logreg.predict(z_test[[i]])==y_test_bb[i] else 
-                         (self.Ex_train[idx_from_train[i]] if np.any(mask_train[i]) else None) for i,ex in enumerate(ex_test)]
+        ex_test = (self.logreg.coef_[None,:,:].transpose(0,2,1)*np.array(w_test_new)).sum(axis=1)
+
+        ex_test = [ex if (self.logreg.predict(z_test[[i]])==y_test_bb[i] or np.any(mask_train[i])) else
+                         None for i,ex in enumerate(ex_test)]
 
         return ex_test
+
 
     def get_decision_rules(self, x_test, y_test_bb, class_label=1, num_k=None):
 
@@ -564,23 +547,31 @@ class ILLUME(torch.nn.Module):
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
+        # range indices of training set
         idx_train = np.arange(self.Z_train.shape[0])
+        # boolean indices where surrogate==black-box in training set
         cond_train = self.dtree.predict(self.Z_train)==self.y_train_bb
-        mask_train = np.array([self.dtree.predict(z.reshape(1,-1))==self.y_train_bb[cond_train] for z in z_test], dtype=bool)
+        # boolean indices where (surrogate==black-box) but (y_train_surr!=y_test_surr) 
+        mask_train = np.array([self.dtree.predict(z.reshape(1,-1))!=self.y_train_bb[cond_train] for z in z_test], dtype=bool)
 
+        # indices of the closest training instance among the training instances with (surrogate==black-box) and (y_train_surr!=y_test_surr) for each test instance
         idx_from_train = [cdist(z.reshape(1,-1), self.Z_train[cond_train], metric='cosine')[0][mask_train[i]].argsort()[0] if np.any(mask_train[i]) else None for i,z in enumerate(z_test)]
-        idx_from_train = [idx_train[cond_train][mask_train[i]][t] if np.any(mask_train[i]) else None for i,t in enumerate(idx_from_train)]
+        # indices of the closest training instance among all training instances for each test instance
+        self.idx_from_train = [idx_train[cond_train][mask_train[i]][t] if np.any(mask_train[i]) else None for i,t in enumerate(idx_from_train)]
 
-        _, ez_dict_test = get_rule_explanation_all(z_test, self.dtd, n_features=self.latent_dim, get_values=False)
+        # latent refinement
+        z_test_new, w_test_new, eps_new = zip(*[(z_test[i], w_test[i], np.zeros_like(z_test[i])) if (self.dtree.predict(z_test[[i]])==y_test_bb[i] or ~np.any(mask_train[i])) else
+                            self._latent_update(x_test[i], self.X_train[self.idx_from_train[i]], w_test[i], self.W_train[self.idx_from_train[i]], self.dtree) for i,_ in enumerate(z_test)])
 
-        ex_dict_test = [decode_latent_rule_complete(x, w, e, self.dtd) for x,w,e in zip(x_test, w_test, ez_dict_test)]
-        ex_dict_test = [fix_cat_rule_complete(e, self.idx_num) for e in ex_dict_test]
+        _, ez_dict_test = get_rule_explanation_all(z_test_new, self.dtd, n_features=self.latent_dim, eps=eps_new)
 
-        ex_dict_test = [ex if self.dtree.predict(z_test[[i]])==y_test_bb[i] else 
-                         (self.Ex_dict_train[idx_from_train[i]] if np.any(mask_train[i]) else None) for i,ex in enumerate(ex_dict_test)]
+        ex_dict_test = [decode_latent_rule_complete(x, w, e, self.dtd) for x,w,e in zip(x_test, w_test_new, ez_dict_test)]
+        ex_dict_test = [simplify_rule_complete(fix_cat_rule_complete(e, self.idx_num)) for e in ex_dict_test]
+
+        ex_dict_test = [ex if (self.dtree.predict(z_test[[i]])==y_test_bb[i] or np.any(mask_train[i])) else 
+                        None for i,ex in enumerate(ex_dict_test)]
 
         return ex_dict_test
-
 
     def get_counterfactuals(self, x_test, y_test_bb, class_label=1, num_k=None):
 
@@ -590,25 +581,30 @@ class ILLUME(torch.nn.Module):
         if (w_test.shape[0]==1) and (x_test.shape[0]>1):
             w_test = np.repeat(w_test, x_test.shape[0], axis=0)
 
+        # range indices of training set
         idx_train = np.arange(self.Z_train.shape[0])
+        # boolean indices where surrogate==black-box in training set
         cond_train = self.dtree.predict(self.Z_train)==self.y_train_bb
-        mask_train = np.array([self.dtree.predict(z.reshape(1,-1))==self.y_train_bb[cond_train] for z in z_test], dtype=bool)
+        # boolean indices where (surrogate==black-box) but (y_train_surr!=y_test_surr) 
+        mask_train = np.array([self.dtree.predict(z.reshape(1,-1))!=self.y_train_bb[cond_train] for z in z_test], dtype=bool)
 
+        # indices of the closest training instance among the training instances with (surrogate==black-box) and (y_train_surr!=y_test_surr) for each test instance
         idx_from_train = [cdist(z.reshape(1,-1), self.Z_train[cond_train], metric='cosine')[0][mask_train[i]].argsort()[0] if np.any(mask_train[i]) else None for i,z in enumerate(z_test)]
-        idx_from_train = [idx_train[cond_train][mask_train[i]][t] if np.any(mask_train[i]) else None for i,t in enumerate(idx_from_train)]
+        # indices of the closest training instance among all training instances for each test instance
+        self.idx_from_train = [idx_train[cond_train][mask_train[i]][t] if np.any(mask_train[i]) else None for i,t in enumerate(idx_from_train)]
 
-        cf_idx_test, _, cz_dict_test = get_crule_explanation_all(z_test, y_test_bb, self.dtd, n_features=self.latent_dim, get_values=False)
+        # latent refinement
+        z_test_new, _, _ = zip(*[(z_test[i], w_test[i], np.zeros_like(z_test[i])) if (self.dtree.predict(z_test[[i]])==y_test_bb[i] or ~np.any(mask_train[i])) else
+                    self._latent_update(x_test[i], self.X_train[self.idx_from_train[i]], w_test[i], self.W_train[self.idx_from_train[i]], self.dtree) for i,_ in enumerate(z_test)])
 
-        cx_dict_test = [[decode_latent_rule_complete(self.X_train[cond_train][cdx[i]], self.W_train[cond_train][cdx[i]], cz[i], self.dtd) 
-                                 for i in range(len(cdx))] for cdx,cz in zip(cf_idx_test, cz_dict_test)]
-        cx_dict_test = [[fix_cat_rule_complete(cx[i], self.idx_num) for i in range(len(cx))] for cx in cx_dict_test]
+        cf_idx_test, _, cx_dict_test = get_crule_explanation_all(np.array(z_test_new), x_test, y_test_bb, 
+                                                                        self.X_train[cond_train], self.W_train[cond_train], 
+                                                                        self.dtd, n_features=self.latent_dim)
 
-        cx_dict_test = [cx if self.dtree.predict(z_test[[i]])==y_test_bb[i] else 
-                         (self.Cx_dict_train[idx_from_train[i]] if np.any(mask_train[i]) else None) for i,cx in enumerate(cx_dict_test)]
+        cx_dict_test = [cx if (self.dtree.predict(z_test[[i]])==y_test_bb[i] or np.any(mask_train[i])) else 
+                        None for i,cx in enumerate(cx_dict_test)]
 
-        cf_list_test = [np.atleast_2d(self.X_train[cond_train][cdx]) if self.dtree.predict(z_test[[i]])==y_test_bb[i] else 
-                         (self.Cx_list_train[idx_from_train[i]] if np.any(mask_train[i]) else None) for i,cdx in enumerate(cf_idx_test)]
+        cf_list_test = [np.atleast_2d(self.X_train[cond_train][cdx]) if (self.dtree.predict(z_test[[i]])==y_test_bb[i] or np.any(mask_train[i])) else 
+                        None for i,cdx in enumerate(cf_idx_test)]
 
         return cx_dict_test, cf_list_test
-
-

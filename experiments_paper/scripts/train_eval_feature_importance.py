@@ -20,7 +20,7 @@ from itertools import combinations
 from more_itertools import random_combination
 from scipy.stats import spearmanr, pearsonr
 from utils import mixed_distance
-from expl_utils import rule_based_similarity_complete, inverse_transform_rule_complete
+from expl_utils import feature_importance_similarity
 
 from scipy.spatial.distance import cdist
 from utils import xgb_eval, lgbm_eval, catb_eval
@@ -43,13 +43,13 @@ parser.add_argument('--lambda_y', default=1.0, type=float,
 parser.add_argument('--lambda_st', default=1.0, type=float,
                   help='optimize local stability of matrices')
 
-parser.add_argument('--lambda_co', default=0.0, type=float,
+parser.add_argument('--lambda_co', default=1.0, type=float,
                   help='optimize collinearity of latent features')
 
-parser.add_argument('--lambda_so', default=1.0, type=float,
+parser.add_argument('--lambda_so', default=0.0, type=float,
                   help='optimize soft-orthogonality of matrices')
 
-parser.add_argument('--num_k', default=2, type=int,
+parser.add_argument('--num_k', default=None, type=int,
                   help='non-zero matrix coefficients')
 
 parser.add_argument('--seed', default=0, type=int,
@@ -74,7 +74,7 @@ def main():
     l_rec, l_kld = (0.0, 1.0)
     bb_name = 'noy' if l_y==0.0 else black_box
 
-    ddict = data_utils.get_tabular_dataset(dataset_name, path='../dataset/', random_state=seed)
+    ddict = data_utils.get_tabular_dataset(dataset_name, path='../../dataset/', random_state=seed)
 
     X_train, X_test, y_train, y_test = (ddict['X_train'].copy(), ddict['X_test'].copy(), ddict['y_train'].copy(), ddict['y_test'].copy())
     features_map = ddict['features_map']
@@ -129,7 +129,7 @@ def main():
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
 
-    result_path = folder_path +f'{dataset_name}_{black_box}_ILL-DT_{bb_name}_expl.{seed}.pkl'
+    result_path = folder_path +f'{dataset_name}_{black_box}_ILL-LR_{bb_name}_expl.{seed}.pkl'
     # if os.path.isfile(result_path):
     #     continue
     # else:
@@ -150,12 +150,13 @@ def main():
 
         latent = models.ILLUME(latent_dim=latent_dim, 
                              max_epochs=1000, early_stopping=30, learning_rate=0.001, batch_size=1024)
-        
+
         X = (X_train, X_test)
         y = None if l_y==0.0 else (y_train_pred, y_test_pred) 
 
         model_path = folder_path + f'{dataset_name}_{black_box}_ILL_{latent_dim}.{seed}.pt'
         print(model_path)
+
         if os.path.isfile(model_path):
             # Latent Space Loading
             latent.load(X, y, idx_num_cat,model_path)
@@ -179,18 +180,16 @@ def main():
                 torch.save(latent.model.state_dict(), model_path)  
 
         # Surrogate Training
-        latent.explain_dectree(class_to_explain, num_k=num_k)
+        latent.explain_linear(class_to_explain, num_k=num_k)
 
-        dt_path = folder_path + f'{dataset_name}_{black_box}_ILL-DT_{bb_name}_{latent_dim}_surr.{seed}.pkl'
-        pickle.dump(latent.dtd, open(dt_path, 'wb'))
+        lr_path = folder_path + f'{dataset_name}_{black_box}_ILL-LR_{bb_name}_{latent_dim}_surr.{seed}.pkl'
+        pickle.dump(latent.lrd, open(lr_path, 'wb'))
 
         # Explanations for test set
-        Ex_dict_test = latent.get_decision_rules(X_test, y_test_bb, class_to_explain, num_k=num_k)
-        #Ex_dict_test = [inverse_transform_rule_complete(ex, ddict['scaler'], latent.idx_num) if not np.any(pd.isnull(ex)) else None for ex in Ex_dict_test]
-        
-        expl_dict[(latent_dim,)]['expl'] = Ex_dict_test
+        Ex_test = latent.get_feature_importance(X_test, y_test_bb, class_to_explain, num_k=num_k)
+        expl_dict[(latent_dim,)]['expl'] = Ex_test
 
-        Eidx_test = np.array([i for i,ex in enumerate(Ex_dict_test) if not np.any(pd.isnull(ex))])
+        Eidx_test = np.array([i for i,ex in enumerate(Ex_test) if not np.any(pd.isnull(ex))])
 
         # Faithfulness
         random.seed(seed)
@@ -200,10 +199,10 @@ def main():
             pair_ijs = list(combinations(list(Eidx_test), 2))
         expl_dict[(latent_dim,)]['pairs_idx'] = pair_ijs
  
-        sim_Ex_test = np.array([rule_based_similarity_complete(Ex_dict_test[i], Ex_dict_test[j]) for i,j in pair_ijs])
+        sim_Ex_test = np.array([feature_importance_similarity(Ex_test[i], Ex_test[j]) for i,j in pair_ijs])
         sim_Bb_test = np.array([cdist(y_test_pred[[i]], y_test_pred[[j]], metric='euclidean')[0][0] for i,j in pair_ijs])
 
-        expl_dict[(latent_dim,)]['cplt_pairs'] = sim_Ex_test
+        expl_dict[(latent_dim,)]['cosine_pairs'] = sim_Ex_test
         expl_dict[(latent_dim,)]['bb_pairs'] = sim_Bb_test
 
         expl_dict[(latent_dim,)]['faithfulness'] = np.maximum(0., -spearmanr(sim_Ex_test, sim_Bb_test)[0])
@@ -220,12 +219,11 @@ def main():
         nn_idx_test = [Eidx_test[conds_test[i]][t] if np.any(conds_test[i]) else None for i,t in enumerate(nn_idx_test)]
         expl_dict[(latent_dim,)]['nns_idx'] = nn_idx_test
 
-        nn_sim_Ex_test = [[rule_based_similarity_complete(Ex_dict_test[i], Ex_dict_test[j]) for j in nn_idx_test[i]]
+        nn_sim_Ex_test = [[feature_importance_similarity(Ex_test[i], Ex_test[j]) for j in nn_idx_test[i]]
                                                 if not np.any(pd.isnull(nn_idx_test[i])) else None for i in Eidx_test]
+        expl_dict[(latent_dim,)]['cosine_nns'] = nn_sim_Ex_test
 
-        expl_dict[(latent_dim,)]['cplt_nns'] = nn_sim_Ex_test
-
-        expl_dict[(latent_dim,)]['robustness'] = np.array([[np.maximum(0., sim)[:knn].min() for sim in nn_sim_Ex_test] for knn in range(1, 21)], dtype=np.float64).mean(axis=1).mean()
+        expl_dict[(latent_dim,)]['robustness'] = np.array([[np.maximum(0., sim)[:knn].min() for sim in nn_sim_Ex_test] for knn in range(2, 21)], dtype=np.float64).mean(axis=1).mean()
 
         print(f'{latent_dim} latent dims - Robustness: ', expl_dict[(latent_dim,)]['robustness'])
         print()

@@ -17,13 +17,13 @@ from itertools import combinations
 from more_itertools import random_combination
 from scipy.stats import spearmanr, pearsonr
 from utils import mixed_distance
-from expl_utils import rule_based_similarity_complete, inverse_transform_rule_complete, get_rule_explanation_all, inverse_transform_rule_complete, fix_cat_rule_complete
+from expl_utils import feature_importance_similarity
 
 from scipy.spatial.distance import cdist
-from utils import xgb_eval, lgbm_eval, catb_eval, tree_eval
+from utils import xgb_eval, lgbm_eval, catb_eval, logistic_eval
 
-from anchor.anchor_tabular import AnchorTabularExplainer
-from lore_sa.lorem import LOREM
+import shap
+from lime.lime_tabular import LimeTabularExplainer
 
 
 #########################################################
@@ -51,7 +51,7 @@ def main():
     black_box = params['bb']
     seed = params['seed']
 
-    ddict = data_utils.get_tabular_dataset(dataset_name, path='../dataset/', random_state=seed)
+    ddict = data_utils.get_tabular_dataset(dataset_name, path='../../dataset/', random_state=seed)
 
     X_train, X_test, y_train, y_test = (ddict['X_train'].copy(), ddict['X_test'].copy(), ddict['y_train'].copy(), ddict['y_test'].copy())
     features_map = ddict['features_map']
@@ -105,7 +105,7 @@ def main():
 
     feature_names = ['x'+str(j) for j in range(X_train.shape[1])]
           
-    for bb_name in ['lore', 'anchor', 'inp-dt']: 
+    for bb_name in ['lime', 'shap', 'inp-lr']: 
 
         folder_path = f'../results/{bb_name}/'
         if not os.path.exists(folder_path):
@@ -117,109 +117,63 @@ def main():
         print(result_path)
         print()
 
-        if bb_name=='lore':
+        if bb_name=='lime':
 
-            for nsamples in [300,1000]: 
-                for nruns in [1,5,10]: 
+            for nsamples in [100,300,1000,5000]:
 
-                    expl_dict[(nsamples, nruns,)] = {}
-                    
-                    lore_explainer = LOREM(X_train, clf_predict_fn, clf_predict_proba_fn,
-                                       feature_names, ddict['class_name'], [0,1], feature_names, features_map,
-                                       K_transformed=X_train, neigh_type='rndgen', binary='binary_from_dts', ngen=10,
-                                       continuous_fun_estimation=True, discretize=False, filter_crules=False, random_state=42)
+                expl_dict[(nsamples,)] = {}
+                
+                lime_explainer = LimeTabularExplainer(X_train, feature_names=feature_names, class_names=[0,1],
+                                          discretize_continuous=False, discretizer='entropy', random_state=42)
 
-                    Ex_dict_test = []
-                    for idx, x in enumerate(X_test):
-                        
-                        lore_expl_dict = dict()
-                        for f in feature_names:
-                            lore_expl_dict[(f, '<=')] = np.inf
-                            lore_expl_dict[(f, '>')] = -np.inf
+                Ex_test = []
+                for idx, x in enumerate(X_test):
+                    lime_exp = lime_explainer.explain_instance(x, clf_predict_proba_fn, num_features=X_train.shape[1], 
+                                                                num_samples=nsamples)
+                    lime_exp_as_dict = {e[0]: e[1] for e in lime_exp.as_list()}
+                    lime_expl_val = np.array([lime_exp_as_dict.get(f, 0.0) for f in feature_names])
+                    Ex_test.append(lime_expl_val)
 
-                        lore_exp = lore_explainer.explain_instance_stable(x, runs=nruns, samples=nsamples)
-                        for c in lore_exp.rule.premises:
-                            fid = feature_names.index(c.att)
-                        for p in lore_exp.rule.premises:
-                            lore_expl_dict[(p.att, p.op)] = p.thr
-                        Ex_dict_test.append(lore_expl_dict)
+                expl_dict[(nsamples,)]['expl'] = Ex_test
 
-                    expl_dict[(nsamples, nruns,)]['expl'] = Ex_dict_test
+        if bb_name=='shap':
 
-        if bb_name=='anchor':
+            expl_dict[()] = {}
+            
+            shap_explainer = shap.TreeExplainer(clf)
+            Ex_test = shap_explainer.shap_values(X_test)    
 
-            for nsamples in [100,300]: 
-                for bsize in [4,10]: 
-                    for delta in [0.1, 0.05]:
-                        for tau in [0.15, 0.05]: 
+            if isinstance(Ex_test, list):
+                Ex_test = Ex_test[class_to_explain]
 
-                            expl_dict[(nsamples, bsize, delta, tau,)] = {}
-                            anchor_explainer = AnchorTabularExplainer(feature_names=feature_names, class_names=[0,1],
-                                                          categorical_names={})
-                            anchor_explainer.fit(X_train, y_train_bb, X_test, y_test_bb)
+            expl_dict[()]['expl'] = Ex_test
 
-                            Ex_dict_test = []
-                            for idx, x in enumerate(X_test[:1]):
-                                anchor_exp, anchor_exp_dict = anchor_explainer.explain_instance(x, clf_predict_fn, 
-                                                            threshold=0.95, delta=delta, tau=tau, 
-                                                            batch_size=nsamples, beam_size=bsize)
-                                anchor_expl_dict = dict()
-                                for f in feature_names:
-                                    anchor_expl_dict[(f, '<=')] = np.inf
-                                    anchor_expl_dict[(f, '>')] = -np.inf
-                                for k,v in anchor_exp_dict.items():
-                                    anchor_expl_dict[(feature_names[k[0]], k[1])] = v
-
-                                Ex_dict_test.append(anchor_expl_dict)
-
-                            expl_dict[(nsamples, bsize, delta, tau,)]['expl'] = Ex_dict_test
-
-        if bb_name=='inp-dt':
+        if bb_name=='inp-lr':
 
             expl_dict[()] = {}
                 
-            dt, f1 = tree_eval(X_train, y_train_bb, X_test, y_test_bb, f1_average='macro')
-
-            dtd = {'X':X_train,
-                   'Y':y_train_bb,
-                   'GT':y_train,
-                   'dt': dt,
-                   'feature_names': feature_names,
-                   'class_name': ddict['class_name'],
-                   'class_values': [0,1],
-                   'numeric_columns': feature_names,
-                   'X_test':X_test,
-                   'Y_test':y_test_bb,
-                   'GT_test':y_test
-                }   
+            lg, f1 = logistic_eval(X_train, y_train_bb, X_test, y_test_bb, f1_average='macro')
 
             idx_train = np.arange(X_train.shape[0])
-            cond_train = dt.predict(X_train)==y_train_bb
-            conds_train = np.array([np.logical_and(dt.predict(x.reshape(1,-1))==y_train_bb, cond_train) for x in X_test], dtype=bool)
+            cond_train = lg.predict(X_train)==y_train_bb
+            conds_train = np.array([np.logical_and(lg.predict(x.reshape(1,-1))==y_train_bb, cond_train) for x in X_test], dtype=bool)
 
             idx_from_train = [mixed_distance(x.reshape(1,-1), X_train, categorical_idx, numeric_idx, metric=('neuclidean', 'hamming'))[0][conds_train[i]].argsort()[0] 
                                 if np.any(conds_train[i]) else None for i,x in enumerate(X_test)]
             idx_from_train = [idx_train[conds_train[i]][t] if np.any(conds_train[i]) else None for i,t in enumerate(idx_from_train)]
 
-            _, Ex_dict_train = get_rule_explanation_all(X_train, dtd, n_features=X_train.shape[1], get_values=False)
-            _, Ex_dict_test = get_rule_explanation_all(X_test, dtd, n_features=X_train.shape[1], get_values=False)   
+            Ex_train = lg.coef_*X_train
+            Ex_test = [ex if lg.predict(X_test[[i]])==y_test_bb[i] 
+                                else (Ex_train[idx_from_train[i]] if np.any(conds_train[i]) else None) for i,ex in enumerate(lg.coef_*X_test)]
 
-            Ex_dict_test = [ex if dt.predict(X_test[[i]])==y_test_bb[i] 
-                            else (Ex_dict_train[idx_from_train[i]] if np.any(conds_train[i]) else None) for i,ex in enumerate(Ex_dict_test)]
-            
-            expl_dict[()]['expl'] = Ex_dict_test
+            expl_dict[()]['expl'] = Ex_test
 
         for key in expl_dict:
 
             # Explanations for test set
-            Ex_dict_test = expl_dict[key]['expl'] 
+            Ex_test = expl_dict[key]['expl'] 
 
-            Ex_dict_test = [fix_cat_rule_complete(ex, numeric_idx) if not np.any(pd.isnull(ex)) else None for ex in Ex_dict_test]
-            #Ex_dict_test = [inverse_transform_rule_complete(ex, ddict['scaler'], numeric_idx) if not np.any(pd.isnull(ex)) else None for ex in Ex_dict_test]
-
-            expl_dict[key]['expl'] = Ex_dict_test
-
-            Eidx_test = np.array([i for i,ex in enumerate(Ex_dict_test) if not np.any(pd.isnull(ex))])
+            Eidx_test = np.array([i for i,ex in enumerate(Ex_test) if not np.any(pd.isnull(ex))])
 
             # Faithfulness
             random.seed(seed)
@@ -229,10 +183,10 @@ def main():
                 pair_ijs = list(combinations(list(Eidx_test), 2))
             expl_dict[key]['pairs_idx'] = pair_ijs
      
-            sim_Ex_test = np.array([rule_based_similarity_complete(Ex_dict_test[i], Ex_dict_test[j]) for i,j in pair_ijs])
+            sim_Ex_test = np.array([feature_importance_similarity(Ex_test[i], Ex_test[j]) for i,j in pair_ijs])
             sim_Bb_test = np.array([cdist(y_test_pred[[i]], y_test_pred[[j]], metric='euclidean')[0][0] for i,j in pair_ijs])
 
-            expl_dict[key]['cplt_pairs'] = sim_Ex_test
+            expl_dict[key]['cosine_pairs'] = sim_Ex_test
             expl_dict[key]['bb_pairs'] = sim_Bb_test
 
             expl_dict[key]['faithfulness'] = np.maximum(0., -spearmanr(sim_Ex_test, sim_Bb_test)[0])
@@ -249,9 +203,9 @@ def main():
             nn_idx_test = [Eidx_test[conds_test[i]][t] if np.any(conds_test[i]) else None for i,t in enumerate(nn_idx_test)]
             expl_dict[key]['nns_idx'] = nn_idx_test
 
-            nn_sim_Ex_test = [[rule_based_similarity_complete(Ex_dict_test[i], Ex_dict_test[j]) for j in nn_idx_test[i]]
+            nn_sim_Ex_test = [[feature_importance_similarity(Ex_test[i], Ex_test[j]) for j in nn_idx_test[i]]
                                                     if not np.any(pd.isnull(nn_idx_test[i])) else None for i in Eidx_test]
-            expl_dict[key]['cplt_nns'] = nn_sim_Ex_test
+            expl_dict[key]['cosine_nns'] = nn_sim_Ex_test
 
             expl_dict[key]['robustness'] = np.array([[np.maximum(0., sim)[:knn].min() for sim in nn_sim_Ex_test] for knn in range(2, 21)], dtype=np.float64).mean(axis=1).mean()
 
