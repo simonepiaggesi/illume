@@ -197,6 +197,7 @@ def linear_eval(Z_train, Y_train, Z_test, Y_test, f1_average='macro',
 
     return best_clf, f1_score(Y_test, Y_pred, average=f1_average)    
 
+logistic_eval = linear_eval
 
 def random_triplet_eval(X, X_new):
 
