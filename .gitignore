@@ -1,36 +1,47 @@
+# Python caches and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local environments and package builds
+.venv/
+venv/
+.env/
+build/
+dist/
+*.egg-info/
+
+# Temporary training directories and model checkpoints
 **/tmp*/
 **/temp*/
-
-# model checkpoints
 *.pt
 *.pth
 *.ckpt
 *.h5
 
-# data dumps
+# Generated arrays and data dumps
 *.npz
 *.npy
 *.feather
 *.parquet
 
-# stdout / stderr
+# Paper reproduction artifacts (keep scripts and datasets tracked)
+paper/blackboxes/
+paper/models/
+paper/results/
+
+# Captured process output
 *.out
 *.err
 
-# python cache
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
-
-#other folders
-experiments_paper/.ipynb_checkpoints/
-experiments_paper/__pycache__/
-experiments_paper/scripts/anchor/.ipynb_checkpoints/
-experiments_paper/scripts/anchor/__pycache__/
-experiments_paper/scripts/lore_sa/.ipynb_checkpoints/
-experiments_paper/scripts/lore_sa/__pycache__/
-experiments_paper/scripts/seneca/.ipynb_checkpoints/
-experiments_paper/scripts/seneca/__pycache__/
-experiments_paper/blackboxes/
-experiments_paper/models/
-experiments_paper/results/
+# Editor and operating system files
+.DS_Store
+.vscode/
+.idea/

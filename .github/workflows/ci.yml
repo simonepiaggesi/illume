@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package and test tools
+        run: python -m pip install ".[model,dev]" build
+      - name: Build wheel and source distribution
+        run: python -m build
+      - name: Run smoke test
+        run: python -m pytest
+      - name: Run quick start
+        run: python examples/quickstart.py
+      - name: Check paper script syntax and dataset path
+        run: |
+          python -m compileall -q paper
+          python - <<'PY'
+          from pathlib import Path
+          from paper.scripts.paper_paths import DATASET_DIR, PAPER_DIR
+          assert (DATASET_DIR / "breast.csv").is_file()
+          assert PAPER_DIR == Path("paper").resolve()
+          PY
+
+  paper-imports:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+      - name: Install paper dependencies
+        run: python -m pip install ".[paper]"
+      - name: Check every paper entry point
+        run: |
+          for script in paper/scripts/*eval*.py; do
+            module=${script%.py}
+            module=${module//\//.}
+            python -m "$module" --help > /dev/null
+          done
