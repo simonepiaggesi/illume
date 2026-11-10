@@ -2,9 +2,9 @@
 
 Code and data for running [ILLUME](https://arxiv.org/abs/2504.20667), a novel post-hoc explanation method for tabular data that generate local interpretable surrogates from globally-trained meta-encoder networks. 
 
-To run the method, see [the quickstart](examples/quickstart.py) or the
-[notebook](examples/illume_example.ipynb). Run the notebook from the repository
-root so it can find the example datasets. The [Appendix](appendix.pdf) describes
+To run the method, see [the quickstart](https://github.com/simonepiaggesi/illume/blob/main/examples/quickstart.py) or the
+[notebook](https://github.com/simonepiaggesi/illume/blob/main/examples/illume_example.ipynb). Run the notebook from the repository
+root so it can find the example datasets. The [Appendix](https://github.com/simonepiaggesi/illume/blob/main/appendix.pdf) describes
 the experimental settings.
 
 Paper: Simone Piaggesi, Riccardo Guidotti, Fosca Giannotti, and Dino Pedreschi. "Explanations go linear: Post-hoc explainability for tabular data with interpretable meta-encoding." In 2025 IEEE International Conference on Data Mining (ICDM), pp. 663-672. IEEE, 2025. [[link]](https://ieeexplore.ieee.org/abstract/document/11391937/)
@@ -12,12 +12,12 @@ Paper: Simone Piaggesi, Riccardo Guidotti, Fosca Giannotti, and Dino Pedreschi. 
 ## Installation
 
 ```bash
-pip install "mimosa-illume[model] @ git+https://github.com/simonepiaggesi/illume"
+pip install "mimosa-illume[model]"
 ```
 
-From a local clone, use `pip install ".[model,dev]"` to run the smoke test and
-quickstart. Use `pip install ".[notebook]"` for the notebook or
-`pip install ".[paper]"` for the experiment scripts.
+From a local clone, use `pip install -e ".[model,dev]"` to run the smoke test and
+quickstart. Use `pip install -e ".[notebook]"` for the notebook or
+`pip install -e ".[paper]"` for the experiment scripts.
 
 ## Basic usage 
 
@@ -61,16 +61,16 @@ evaluation pickles (`.pkl`). These generated directories are excluded by
 `.gitignore`.
 
 For the experiments with feature importance and real data:
-- ILLUME: [train_eval_feature_importance.py](paper/scripts/train_eval_feature_importance.py)
-- LIME, SHAP, INP-LR: [baseline_eval_feature_importance.py](paper/scripts/baseline_eval_feature_importance.py)
+- ILLUME: [train_eval_feature_importance.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/train_eval_feature_importance.py)
+- LIME, SHAP, INP-LR: [baseline_eval_feature_importance.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/baseline_eval_feature_importance.py)
 
 For the experiments with decision rules and real data:
-- ILLUME: [train_eval_decision_rule.py](paper/scripts/train_eval_decision_rule.py)
-- LORE, ANCHOR, INP-DT: [baseline_eval_decision_rule.py](paper/scripts/baseline_eval_decision_rule.py)
+- ILLUME: [train_eval_decision_rule.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/train_eval_decision_rule.py)
+- LORE, ANCHOR, INP-DT: [baseline_eval_decision_rule.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/baseline_eval_decision_rule.py)
 
 For the experiments with SENECA synthetic data:
-- ILLUME: [seneca_train_eval_feature_importance.py](paper/scripts/seneca_train_eval_feature_importance.py) and [seneca_train_eval_decision_rule.py](paper/scripts/seneca_train_eval_decision_rule.py) 
-- Competitors: [seneca_baseline_eval_feature_importance.py](paper/scripts/seneca_baseline_eval_feature_importance.py) and [seneca_baseline_eval_decision_rule.py](paper/scripts/seneca_baseline_eval_decision_rule.py) 
+- ILLUME: [seneca_train_eval_feature_importance.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/seneca_train_eval_feature_importance.py) and [seneca_train_eval_decision_rule.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/seneca_train_eval_decision_rule.py) 
+- Competitors: [seneca_baseline_eval_feature_importance.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/seneca_baseline_eval_feature_importance.py) and [seneca_baseline_eval_decision_rule.py](https://github.com/simonepiaggesi/illume/blob/main/paper/scripts/seneca_baseline_eval_decision_rule.py) 
 
 ## Cite us
 
