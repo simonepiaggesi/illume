@@ -18,10 +18,11 @@ dependencies = [
     "tqdm>=4.64.1",
     "more-itertools>=10.5.0",
     "matplotlib>=3.5.3",
+    "torch>=1.12.1", 
+    "torchvision>=0.13.1"
 ]
 
 [project.optional-dependencies]
-model = ["torch>=1.12.1", "torchvision>=0.13.1"]
 notebook = [
     "torch>=1.12.1",
     "torchvision>=0.13.1",
