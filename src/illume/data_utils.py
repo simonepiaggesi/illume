@@ -32,6 +32,19 @@ datasets = {
 
 def get_tabular_dataset(name, path=None, test_size=0.2, random_state=None):
 
+    """Load and prepare a named tabular dataset.
+
+    Args:
+        name: Dataset name, such as "compas".
+        path: Directory containing the dataset CSV files. If omitted, search
+            the current directory and its parents for a repository containing
+            both pyproject.toml and datasets/. The datasets are not included
+            in the pip package, so supply path when running outside the
+            repository.
+        test_size: Fraction used for each train/test and train/validation split.
+        random_state: Random seed for the splits.
+    """
+
     if path is None:
         # Find the repository's datasets/ folder for notebook use.
 
@@ -41,7 +54,11 @@ def get_tabular_dataset(name, path=None, test_size=0.2, random_state=None):
                 None,
             )
         if repo is None:
-            raise FileNotFoundError("Start Jupyter from the project folder or a subfolder")
+            raise FileNotFoundError(
+                    "Dataset directory not found. Pass path= to get_tabular_dataset() "
+                    "with the directory containing the dataset CSV files. "
+                    "Datasets are not included in the pip package."
+            )
 
         path = repo / "datasets"
 

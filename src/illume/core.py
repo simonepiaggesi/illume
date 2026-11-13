@@ -188,26 +188,6 @@ def compute_similarity_x(X, idx_cat=None, sigma=1):
     return M / (torch.ones([M.shape[0],M.shape[1]]).to(device)*(torch.sum(M, axis = 0))).transpose(0,1)
 
 
-def kld_loss_function_zxy(X, Z, y, idx_cat=None, sigma=1):
-    """Compare latent similarities with input and available label similarities.
-
-    Args:
-        X: Input batch; Z: latent-code batch; y: label-vector batch.
-        idx_cat: Optional categorical indices; sigma: kernel width.
-
-    Returns:
-        Scalar KL-divergence loss tensor.
-    """
-    similarity_KLD = torch.nn.KLDivLoss(reduction='batchmean')
-    Sx = compute_similarity_x(X, idx_cat, sigma)
-    Sz = compute_similarity_z(Z, sigma)
-    loss = similarity_KLD(torch.log(Sz), Sx)
-    if not torch.any(torch.isnan(y)):
-        Sy = compute_similarity_y(y, sigma)
-        loss += similarity_KLD(torch.log(Sz), Sy)
-    return loss
-
-
 def kld_loss_function_wxyz(X, W, Z, y, idx_cat=None, sigma=1):
     """Align input, weight, latent, and available label similarities.
 
@@ -392,14 +372,26 @@ class ILLUME(torch.nn.Module):
         """Configure an ILLUME model; data is supplied by fit or load.
 
         Args:
-            latent_dim: Latent features (at least two); mlp_layers: encoder depth.
-            dropout: Encoder dropout; nj_proj: Jacobian projection count.
-            max_epochs: Training limit; early_stopping: patience in epochs.
-            learning_rate: Adam step size; batch_size: samples per batch.
+            latent_dim: Latent features (at least two). 
+            mlp_layers: encoder depth.
+            dropout: Encoder dropout. 
+            nj_proj: Jacobian projection count.
+            max_epochs: Training limit. 
+            early_stopping: patience in epochs.
+            learning_rate: Adam step size. 
+            batch_size: samples per batch.
             sigma: Similarity kernel width.
 
-        Returns:
-            None; stores configuration.
+        Notes:
+            ``dropout`` and ``nj_proj`` were added to the installable package.
+            The default ``dropout=0.0`` disables encoder dropout.
+            ``nj_proj`` controls the number of projections used to estimate
+            the Jacobian stability loss. The default ``nj_proj=1`` uses one
+            random projection; ``nj_proj=-1`` computes the full Jacobian
+            penalty used in the paper implementation. To match that
+            stability-loss computation, use ``dropout=0.0`` and
+            ``nj_proj=-1``.
+
         """
         super().__init__()
 

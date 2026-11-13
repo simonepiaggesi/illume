@@ -24,16 +24,12 @@ dependencies = [
 
 [project.optional-dependencies]
 notebook = [
-    "torch>=1.12.1",
-    "torchvision>=0.13.1",
     "lightgbm>=4.5.0",
     "xgboost>=1.5.1",
     "catboost>=1.2.7",
     "ipykernel>=6.29.5",
 ]
 paper = [
-    "torch>=1.12.1",
-    "torchvision>=0.13.1",
     "lightgbm>=4.5.0",
     "xgboost>=1.5.1",
     "catboost>=1.2.7",

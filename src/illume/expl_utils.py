@@ -77,8 +77,21 @@ def decode_latent_rule_complete(x_input, w_latent, expl_dict, dt_dict, check_con
     rules_x_all = list(set(rules_x_all))
 
     if check_consistency:
-        rules_x_df = pd.DataFrame(rules_x_all, columns=['i', 'x', 'op', 'val'])
-        assert(np.all(rules_x_df.groupby(['i', 'x']).apply(lambda r: r[r.op=='<='].val.min() >= r[r.op=='>'].val.max()).values))
+        for feature_idx in range(len(original_feature_names)):
+            upper = min(
+                (v for i, _, op, v in rules_x_all
+                if i == feature_idx and op == "<="),
+                default=np.inf,
+            )
+            lower = max(
+                (v for i, _, op, v in rules_x_all
+                if i == feature_idx and op == ">"),
+                default=-np.inf,
+            )
+            assert lower < upper, (
+                f"Contradictory conditions for x{feature_idx}: "
+                f"x > {lower} and x <= {upper}"
+            )
 
     rules_x_all = sorted(rules_x_all, key=lambda row: (row[0], row[2]))
     rules_x_all = [(*g_key, min([v[3] for v in g])) if g_key[2]=='<=' else (*g_key, max([v[3] for v in g]))  

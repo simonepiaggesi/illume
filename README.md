@@ -12,12 +12,12 @@ Paper: Simone Piaggesi, Riccardo Guidotti, Fosca Giannotti, and Dino Pedreschi. 
 ## Installation
 
 ```bash
-pip install "mimosa-illume[model]"
+pip install mimosa-illume
 ```
 
-From a local clone, use `pip install -e ".[model,dev]"` to run the smoke test and
-quickstart. Use `pip install -e ".[notebook]"` for the notebook or
-`pip install -e ".[paper]"` for the experiment scripts.
+From a local clone, use `pip install -e ".[dev]"` to run the smoke test and
+quickstart. Use `pip install -e ".[notebook]"` for the example notebooks 
+or `pip install -e ".[paper]"` for the experiment scripts.
 
 ## Basic usage 
 
@@ -37,7 +37,9 @@ model.fit(
 W, Z = model.transform(X_val)
 ```
 
-Full example: `examples/illume_example.ipynb`.
+Full example working with the datasets tested in the paper: `examples/illume_example.ipynb`.
+
+Full example working with scikit-learn datasets: `examples/illume_example_sklearn.ipynb`.
 
 ## Cite us
 

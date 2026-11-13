@@ -2,10 +2,10 @@
 
 ## Reproduce paper experiments
 
-After installing the `paper` extra, run scripts from the repository root, for
-example:
+Use a repository checkout containing `paper/` and `datasets/`. From the repository root (the directory containing `pyproject.toml`), install the paper extra dependencies and run the scripts as modules:
 
 ```bash
+python -m pip install -e ".[paper]"
 python -m paper.scripts.train_eval_feature_importance --dataset breast --bb xgb --seed 0
 python -m paper.scripts.baseline_eval_feature_importance --dataset breast --bb xgb --seed 0
 ```
