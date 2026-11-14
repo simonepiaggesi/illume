@@ -739,6 +739,8 @@ class ILLUME(torch.nn.Module):
         epoch_val_losses = []
         epoch = 1
         best = np.inf
+        wait = 0                
+        saved = False
         # progress bar
         pbar = tqdm(bar_format="{postfix[0]} {postfix[1][value]:03d} {postfix[2]} {postfix[3][value]:.5f} {postfix[4]} {postfix[5][value]:.5f} {postfix[6]} {postfix[7][value]:d}",
             postfix=["Epoch:", {'value':0}, "Train Loss", {'value':0}, "Test Loss", {'value':0}, "Early Stopping", {"value":0}])
@@ -1001,7 +1003,7 @@ class ILLUME(torch.nn.Module):
 
         Returns:
             Counterfactual rule dictionaries and matching training-row arrays;
-    individual list entries may be None when no counterfactual is found.
+            individual list entries may be None when no counterfactual is found.
         """
         y_test_bb = (y_test_bb==class_label).astype(int)
 

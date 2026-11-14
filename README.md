@@ -7,7 +7,7 @@ To run the method, see [the quickstart](https://github.com/simonepiaggesi/illume
 root so it can find the example datasets. The [Appendix](https://github.com/simonepiaggesi/illume/blob/main/appendix.pdf) describes
 the experimental settings.
 
-Paper: Simone Piaggesi, Riccardo Guidotti, Fosca Giannotti, and Dino Pedreschi. "Explanations go linear: Post-hoc explainability for tabular data with interpretable meta-encoding." In 2025 IEEE International Conference on Data Mining (ICDM), pp. 663-672. IEEE, 2025. [[link]](https://ieeexplore.ieee.org/abstract/document/11391937/)
+Paper: Simone Piaggesi, Riccardo Guidotti, Fosca Giannotti, and Dino Pedreschi. "Explanations go linear: Post-hoc explainability for tabular data with interpretable meta-encoding." In IEEE International Conference on Data Mining (ICDM) 2025. [[link]](https://ieeexplore.ieee.org/abstract/document/11391937/)
 
 ## Installation
 
